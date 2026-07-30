@@ -35,11 +35,11 @@
     "@types/express": "latest",
     "@types/node": "latest",
     "@types/supertest": "latest",
-    "@preact/preset-vite": "^2.10.5",
+    "@preact/preset-vite": "^2.10.6",
     "cpy-cli": "latest",
     "supertest": "latest",
     "vitest": "latest",
-    "vite": "^8.0.3"
+    "vite": "^8.1.5"
   },
   "publishConfig": {
     "access": "public"
