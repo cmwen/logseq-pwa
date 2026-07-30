@@ -33,10 +33,10 @@
   "devDependencies": {
     "@types/express": "latest",
     "@types/node": "latest",
-    "@preact/preset-vite": "^2.10.5",
-    "rolldown": "1.0.0-rc.12",
+    "@preact/preset-vite": "^2.10.6",
+    "rolldown": "1.2.0",
     "vitest": "latest",
-    "vite": "^8.0.3"
+    "vite": "^8.1.5"
   },
   "publishConfig": {
     "access": "public"
