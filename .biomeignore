@@ -1,0 +1,12 @@
+node_modules
+dist
+coverage
+*.tsbuildinfo
+.vscode
+.idea
+*.log
+pnpm-lock.yaml
+*.min.js
+*.bundle.js
+packages/**/dist
+.publish-backup

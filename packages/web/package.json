@@ -1,0 +1,53 @@
+{
+  "name": "@template/web",
+  "version": "0.1.0",
+  "description": "Web UI and REST API server",
+  "keywords": [
+    "web",
+    "api",
+    "express",
+    "preact"
+  ],
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "template-web": "dist/server.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b && vite build",
+    "prepare": "tsc -b && vite build",
+    "dev": "vite",
+    "test": "vitest run",
+    "lint": "biome check --write src test",
+    "lint:ci": "biome check src test",
+    "format": "biome format --write src test",
+    "format:check": "biome format src test"
+  },
+  "dependencies": {
+    "@template/core": "workspace:*",
+    "express": "^5.2.1",
+    "preact": "^10.29.2"
+  },
+  "devDependencies": {
+    "@types/express": "latest",
+    "@types/node": "latest",
+    "@types/supertest": "latest",
+    "@preact/preset-vite": "^2.10.5",
+    "cpy-cli": "latest",
+    "supertest": "latest",
+    "vitest": "latest",
+    "vite": "^8.0.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cmwen/min-node-app-template.git",
+    "directory": "packages/web"
+  },
+  "license": "MIT"
+}

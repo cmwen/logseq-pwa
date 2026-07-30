@@ -1,0 +1,46 @@
+{
+  "name": "@template/mcp",
+  "version": "0.1.0",
+  "description": "Model Context Protocol server for AI agent integration",
+  "keywords": [
+    "mcp",
+    "ai-agents",
+    "model-context-protocol"
+  ],
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "template-mcp": "dist/server.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "prepare": "tsc -b",
+    "test": "vitest run",
+    "lint": "biome check --write src test",
+    "lint:ci": "biome check src test",
+    "format": "biome format --write src test",
+    "format:check": "biome format src test"
+  },
+  "dependencies": {
+    "@template/core": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "vitest": "latest"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cmwen/min-node-app-template.git",
+    "directory": "packages/mcp"
+  },
+  "license": "MIT"
+}
