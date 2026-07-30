@@ -1,7 +1,7 @@
 {
-  "name": "min-node-app-template",
+  "name": "loam-logseq-pwa",
   "version": "0.0.0",
-  "description": "Minimal Node.js app template - monorepo with CLI, Web, and MCP support",
+  "description": "A local-first PWA for reading, editing, and connecting Logseq pages",
   "packageManager": "pnpm@10.15.1",
   "engines": {
     "node": ">=20.19",
@@ -26,18 +26,15 @@
     "vitest": "latest"
   },
   "keywords": [
-    "template",
-    "nodejs",
-    "typescript",
-    "monorepo",
-    "pnpm",
-    "cli",
-    "web",
-    "mcp"
+    "logseq",
+    "pwa",
+    "local-first",
+    "github-pages",
+    "preact"
   ],
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/cmwen/min-node-app-template.git"
+    "url": "git+https://github.com/cmwen/logseq-pwa.git"
   }
 }

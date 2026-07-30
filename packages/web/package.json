@@ -1,17 +1,17 @@
 {
-  "name": "@template/web",
+  "name": "@loam/web",
   "version": "0.1.0",
-  "description": "Web UI and REST API server",
+  "description": "Loam local-first Logseq graph reader and static web app",
   "keywords": [
-    "web",
-    "api",
-    "express",
+    "logseq",
+    "pwa",
+    "github-pages",
     "preact"
   ],
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "template-web": "dist/server.js"
+    "loam-web": "dist/server.js"
   },
   "files": [
     "dist"
@@ -27,7 +27,7 @@
     "format:check": "biome format src test"
   },
   "dependencies": {
-    "@template/core": "workspace:*",
+    "@loam/core": "workspace:*",
     "express": "^5.2.1",
     "preact": "^10.29.2"
   },
@@ -46,7 +46,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/cmwen/min-node-app-template.git",
+    "url": "git+https://github.com/cmwen/logseq-pwa.git",
     "directory": "packages/web"
   },
   "license": "MIT"

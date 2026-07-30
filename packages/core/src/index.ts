@@ -20,4 +20,5 @@ export class CoreService {
   }
 }
 
+export * from './logseq.js';
 export * from './utils.js';

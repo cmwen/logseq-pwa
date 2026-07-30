@@ -1,4 +1,4 @@
-import { CoreService } from '@template/core';
+import { CoreService } from '@loam/core';
 import { Command } from 'commander';
 import { startMcpMode } from './modes/mcp.js';
 import { startWebMode } from './modes/web.js';
@@ -14,7 +14,7 @@ const config = {
 const coreService = new CoreService(config);
 
 program
-  .name('template-cli')
+  .name('loam-cli')
   .description('Unified CLI with support for CLI, Web, and MCP modes')
   .version('0.1.0');
 

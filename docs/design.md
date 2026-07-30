@@ -1,168 +1,52 @@
-# Design Document
+# Loam Design Notes
 
 ## Overview
 
-This template provides a foundation for building Node.js applications with CLI, Web, and MCP interfaces.
+Loam is a local-first PWA for reading and editing a Logseq graph. The first release keeps the interaction model deliberately small: open a folder, select a page, follow links, inspect backlinks, and save edits back to the same folder.
 
 ## Architecture
 
-### Monorepo Structure
-
-The project uses pnpm workspaces to manage multiple packages:
-
-- **Core Package**: Contains shared business logic, models, and utilities
-- **CLI Package**: Command-line interface built with Commander.js
-- **Web Package**: Web application with REST API (Express) and UI (Vite)
-- **MCP Package**: Model Context Protocol server for AI agent integration
-
-### Technology Stack
-
-- **Language**: TypeScript with strict mode
-- **Package Manager**: pnpm with workspaces
-- **Build Tool**: TypeScript compiler (tsc)
-- **Bundler**: Rolldown for CLI, Vite for Web
-- **Testing**: Vitest
-- **Linting/Formatting**: Biome
-- **CI/CD**: GitHub Actions
-
-## Design Principles
-
-### 1. Modularity
-
-Each package has a single responsibility:
-- Core focuses on business logic
-- CLI provides command-line interface
-- Web provides HTTP API and UI
-- MCP provides AI agent integration
-
-### 2. Type Safety
-
-- Use TypeScript strict mode
-- Define interfaces for all public APIs
-- Minimize use of `any` type
-- Use discriminated unions for variants
-
-### 3. Testability
-
-- Write unit tests for business logic
-- Mock external dependencies
-- Use dependency injection where appropriate
-- Aim for high code coverage
-
-### 4. Performance
-
-- Lazy load modules when possible
-- Bundle CLI into single file for fast startup
-- Use streaming for large data processing
-- Cache expensive computations
-
-### 5. Developer Experience
-
-- Clear error messages
-- Comprehensive documentation
-- Fast build and test cycles
-- Auto-formatting with Biome
-
-## Package Dependencies
-
-```
-cli     → core
-web     → core
-mcp     → core
-core    → (external deps only)
+```text
+Browser
+  ├─ File System Access API ──> selected Logseq folder
+  ├─ Core parser/indexer ─────> page titles, outgoing links, backlinks
+  └─ Preact UI ───────────────> page reader, editor, search, page map
+                                    │
+                                    └─ static Vite build ──> GitHub Pages
 ```
 
-The core package should:
-- Have minimal external dependencies
-- Be framework-agnostic
-- Export clean, typed APIs
-- Handle data persistence and business logic
+The app is client-only when deployed. No graph content is sent to a Loam server. The existing Express, CLI, and MCP packages remain as extension points from the base monorepo, but are not required by the Pages build.
 
-## Data Flow
+### Core package
 
-### CLI Flow
-```
-User → CLI → Core → File System/API
-```
+`packages/core/src/logseq.ts` contains framework-agnostic helpers for:
 
-### Web Flow
-```
-Browser → HTTP → Express → Core → File System/API
-```
+- normalizing Logseq page names and filenames;
+- extracting `[[Page]]` and `[[Page|alias]]` references;
+- building outgoing-link and backlink relationships.
 
-### MCP Flow
-```
-AI Client → stdio → MCP Server → Core → File System/API
-```
+The core package has no browser or filesystem dependency, so the indexing behavior can be tested independently.
 
-## Configuration
+### Web package
 
-Configuration is managed through:
-- Environment variables (`.env` files)
-- Configuration files (`config.json`, `config.js`)
-- Command-line arguments
-- Sensible defaults
+`packages/web/src/client/logseq.ts` adapts the browser File System Access API. It recursively reads `.md` files, retains each file handle for writes, and creates new pages under `pages/`. `App.tsx` owns the current graph selection and UI state; the rendered page body intentionally supports a small, safe subset of Logseq markdown rather than trying to be a full Markdown engine.
 
-Priority order (highest to lowest):
-1. Command-line arguments
-2. Environment variables
-3. Configuration files
-4. Defaults
+### Local file behavior
 
-## Error Handling
+1. The user selects a graph root with `showDirectoryPicker({ mode: 'readwrite' })`.
+2. Loam reads markdown files in that folder and its child directories.
+3. The core indexer maps page titles to links and backlinks.
+4. Saving calls `FileSystemFileHandle.createWritable()` for the selected page.
+5. Refreshing repeats the read/index pass so edits made in Logseq or another editor appear.
 
-- Use custom error classes for domain errors
-- Provide helpful error messages
-- Log errors with context
-- Handle errors at appropriate boundaries
-- Don't expose internal details to users
+The demo graph is in-memory and read-only. It exists so the UI and link interactions can be evaluated before a folder is granted.
 
-## Security Considerations
+## Scope boundaries
 
-- Validate all inputs
-- Sanitize outputs
-- Use environment variables for secrets
-- Don't commit secrets to git
-- Keep dependencies updated
-- Run security audits regularly
+Included: page reading, lightweight Logseq rendering, page search, page links, backlinks, editing, saving, page creation, and PWA shell caching.
 
-## Build Process
-
-### Development
-```bash
-pnpm install    # Install dependencies
-pnpm build      # Build all packages
-pnpm test       # Run tests
-```
-
-### Production
-```bash
-pnpm install --frozen-lockfile
-pnpm build
-# CLI is bundled into single file
-# Web is built with Vite optimization
-```
+Not included: Datalog queries, charts, graph visualization, sync, authentication, cloud storage, or server-side parsing.
 
 ## Deployment
 
-### CLI
-- Published to npm as single bundled file
-- Executable via `npx` or global install
-
-### Web
-- Can be deployed to any Node.js hosting
-- Serve static files with Express
-- Configure environment variables
-
-### MCP
-- Runs locally as stdio server
-- Used by AI clients (IDEs, tools)
-
-## Future Considerations
-
-- Add support for plugins/extensions
-- Consider GraphQL for Web API
-- Add real-time updates (WebSockets)
-- Implement caching layer
-- Add monitoring and observability
-- Support multiple storage backends
+Vite builds `packages/web/src/client` to `packages/web/dist/client` with a relative base path so the artifact works at a GitHub Pages project URL. `.github/workflows/deploy-pages.yml` uploads that directory using the official Pages artifact and deploy actions.

@@ -30,8 +30,8 @@ The devcontainer includes:
 
 ```bash
 # Clone the repository
-git clone https://github.com/cmwen/min-node-app-template.git
-cd min-node-app-template
+git clone https://github.com/cmwen/logseq-pwa.git
+cd logseq-pwa
 
 # Enable corepack and activate pnpm
 corepack enable
@@ -158,7 +158,7 @@ packages/
 2. Add `package.json`:
    ```json
    {
-     "name": "@template/my-package",
+     "name": "@loam/my-package",
      "version": "0.1.0",
      "type": "module",
      "main": "dist/index.js",
@@ -167,7 +167,7 @@ packages/
        "test": "vitest run"
      },
      "dependencies": {
-       "@template/core": "workspace:*"
+       "@loam/core": "workspace:*"
      }
    }
    ```

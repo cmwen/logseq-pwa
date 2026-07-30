@@ -10,8 +10,8 @@
 
 ```bash
 # Clone the repository
-git clone https://github.com/cmwen/min-node-app-template.git
-cd min-node-app-template
+git clone https://github.com/cmwen/logseq-pwa.git
+cd logseq-pwa
 
 # Enable corepack (includes pnpm)
 corepack enable

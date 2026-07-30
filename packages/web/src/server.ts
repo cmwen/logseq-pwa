@@ -2,7 +2,7 @@
 
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CoreService } from '@template/core';
+import { CoreService } from '@loam/core';
 import express, { type Express } from 'express';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -10,7 +10,7 @@ const app: Express = express();
 const port = process.env.PORT || 3000;
 
 const config = {
-  name: 'Template Web',
+  name: 'Loam',
   version: '0.1.0',
   environment: (process.env.NODE_ENV as 'development' | 'production') || 'development',
 };
@@ -33,14 +33,6 @@ app.get('/api/health', (_req, res) => {
 
 app.get('/api/config', (_req, res) => {
   res.json(coreService.getConfig());
-});
-
-app.post('/api/greet', (req, res) => {
-  const { name } = req.body;
-  if (!name) {
-    return res.status(400).json({ error: 'Name is required' });
-  }
-  res.json({ message: coreService.greet(name) });
 });
 
 // Serve static files in production

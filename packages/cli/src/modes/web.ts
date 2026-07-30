@@ -1,6 +1,6 @@
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CoreService } from '@template/core';
+import { CoreService } from '@loam/core';
 import express, { type Express } from 'express';
 
 export async function startWebMode(port: number = 3000) {

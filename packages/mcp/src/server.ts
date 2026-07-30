@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 
+import { CoreService } from '@loam/core';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { CoreService } from '@template/core';
 import { z } from 'zod';
 
 const config = {
@@ -16,7 +16,7 @@ const coreService = new CoreService(config);
 
 const server = new Server(
   {
-    name: 'template-mcp',
+    name: 'loam-mcp',
     version: '0.1.0',
   },
   {

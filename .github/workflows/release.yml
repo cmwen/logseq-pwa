@@ -82,6 +82,6 @@ jobs:
           
           ## Changes
           
-          See [CHANGELOG.md](https://github.com/cmwen/min-node-app-template/blob/main/CHANGELOG.md) for details.
+          See [CHANGELOG.md](https://github.com/cmwen/logseq-pwa/blob/main/CHANGELOG.md) for details.
         draft: false
         prerelease: false

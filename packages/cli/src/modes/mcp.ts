@@ -1,7 +1,7 @@
+import { CoreService } from '@loam/core';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { CoreService } from '@template/core';
 import { z } from 'zod';
 
 export async function startMcpMode() {
@@ -15,7 +15,7 @@ export async function startMcpMode() {
 
   const server = new Server(
     {
-      name: 'template-cli-mcp',
+      name: 'loam-cli-mcp',
       version: '0.1.0',
     },
     {

@@ -1,4 +1,4 @@
-# Contributing to min-node-app-template
+# Contributing to Loam
 
 Thank you for your interest in contributing! This document provides guidelines for contributing to this template.
 
@@ -12,7 +12,7 @@ Thank you for your interest in contributing! This document provides guidelines f
 ## Getting Started
 
 1. Fork the repository
-2. Clone your fork: `git clone https://github.com/YOUR_USERNAME/min-node-app-template.git`
+2. Clone your fork: `git clone https://github.com/YOUR_USERNAME/logseq-pwa.git`
 3. Create a feature branch: `git checkout -b feature/my-feature`
 4. Make your changes
 5. Run tests: `pnpm test`

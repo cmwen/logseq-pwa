@@ -1,5 +1,5 @@
 {
-  "name": "@template/mcp",
+  "name": "@loam/mcp",
   "version": "0.1.0",
   "description": "Model Context Protocol server for AI agent integration",
   "keywords": [
@@ -11,7 +11,7 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "template-mcp": "dist/server.js"
+    "loam-mcp": "dist/server.js"
   },
   "files": [
     "dist"
@@ -26,7 +26,7 @@
     "format:check": "biome format src test"
   },
   "dependencies": {
-    "@template/core": "workspace:*",
+    "@loam/core": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "^4.4.3"
   },
@@ -39,7 +39,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/cmwen/min-node-app-template.git",
+    "url": "git+https://github.com/cmwen/logseq-pwa.git",
     "directory": "packages/mcp"
   },
   "license": "MIT"
