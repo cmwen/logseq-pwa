@@ -1,45 +1,64 @@
-import { buildPageIndex, normalizePageTitle, type PageInput } from '@loam/core';
-import { useMemo, useState } from 'preact/hooks';
+import { buildPageIndex, normalizePageTitle, type PageInput, parseBlockMarkdown } from '@loam/core';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import {
+  appendJournalCapture,
   createPageFile,
+  ensureJournalFile,
+  findJournalByDate,
+  journalPathForDate,
+  journalTitleForDate,
   type LocalPage,
   pickLogseqFolder,
   readLogseqFolder,
   savePage,
   supportsFolderAccess,
 } from './logseq.js';
+import { OutlinerEditor } from './OutlinerEditor.js';
+import {
+  type OutlinerBlock,
+  parseMarkdownBlocks,
+  serializeMarkdownBlocks,
+} from './outliner-model.js';
 import './styles.css';
 
+const todayTitle = journalTitleForDate();
+
 const demoPages: PageInput[] = [
+  {
+    title: todayTitle,
+    path: journalPathForDate(),
+    content:
+      '- Welcome to your daily journal\n  - Press Enter to create a block\n  - Press Tab to nest it beneath the previous thought\n- Try the editor, then open your local graph when you are ready.\n',
+  },
   {
     title: 'Welcome to Loam',
     path: 'pages/Welcome_to_Loam.md',
     content:
-      '# Welcome to Loam\n\n- A small, local-first reader for your Logseq graph.\n- Everything here is a real page link: [[Working set]] and [[Reading list]].\n- Open your own folder when you are ready.\n\n## A quiet graph\n\nLoam keeps the useful parts of a graph close at hand: pages, backlinks, and the texture of your daily notes. Your files stay exactly where they are.',
+      '- A small, local-first outliner for your knowledge workspace.\n  - Everything here is a real page link: [[Working set]] and [[Reading list]].\n  - Open your own folder when you are ready.\n- Loam keeps pages, backlinks, and the texture of your daily notes close at hand.\n  - Your files stay exactly where they are.\n',
   },
   {
     title: 'Working set',
     path: 'pages/Working_set.md',
     content:
-      '# Working set\n\n- TODO Sketch the first release\n- DONE Set up local folder access\n- TODO Link the page view to [[Reading list]]\n\nThe best next step is usually the one that makes the graph feel more alive. See [[Welcome to Loam]] for the short tour.',
+      '- TODO Sketch the first release\n  - DONE Set up local folder access\n  - TODO Link the page view to [[Reading list]]\n- The best next step is usually the one that makes the graph feel more alive.\n  - See [[Welcome to Loam]] for the short tour.\n',
   },
   {
     title: 'Reading list',
     path: 'pages/Reading_list.md',
     content:
-      '# Reading list\n\n- [[The Art of Noticing]] — a reminder to look slowly\n- [[Designing for calm]] — notes on humane interfaces\n- #someday\n\nThis page is linked from [[Working set]]. Unknown links are still shown as links, ready for a page to be created in your graph.',
+      '- [[The Art of Noticing]] — a reminder to look slowly\n- [[Designing for calm]] — notes on humane interfaces\n- #someday\n  - This page is linked from [[Working set]].\n  - Unknown links remain visible and ready to become pages.\n',
   },
   {
     title: 'The Art of Noticing',
     path: 'pages/The_Art_of_Noticing.md',
     content:
-      '# The Art of Noticing\n\n- A page can be a place to return to, not just a container for facts.\n- Capture the small details before they disappear.\n\nBack to [[Reading list]].',
+      '- A page can be a place to return to, not just a container for facts.\n  - Capture the small details before they disappear.\n- Back to [[Reading list]].\n',
   },
   {
     title: 'Designing for calm',
     path: 'pages/Designing_for_calm.md',
     content:
-      '# Designing for calm\n\n- Make the next action obvious\n- Give information room to breathe\n- Keep the user close to their source of truth\n\nRelated: [[Reading list]] and [[Welcome to Loam]].',
+      '- Make the next action obvious\n- Give information room to breathe\n- Keep the user close to their source of truth\n  - Related: [[Reading list]] and [[Welcome to Loam]].\n',
   },
 ];
 
@@ -157,6 +176,52 @@ function reindexPages(pages: LocalPage[]): LocalPage[] {
       handle: handles.get(page.path),
     })
   );
+}
+
+interface BlockSearchResult {
+  blockId: string;
+  content: string;
+  context?: string;
+  pagePath: string;
+  pageTitle: string;
+  references: string[];
+  searchable: string;
+}
+
+function indexPageBlocks(pages: LocalPage[]): BlockSearchResult[] {
+  const results: BlockSearchResult[] = [];
+  for (const page of pages) {
+    const blocks = parseBlockMarkdown(page.content);
+    const byId = new Map(blocks.map((block) => [block.id, block]));
+    for (const block of blocks) {
+      const searchable = [
+        page.title,
+        block.content,
+        ...block.references,
+        ...block.tags,
+        ...Object.entries(block.properties).flat(),
+      ]
+        .join(' ')
+        .toLocaleLowerCase();
+      const parent = block.parentId ? byId.get(block.parentId) : undefined;
+      results.push({
+        blockId: block.id,
+        content: block.content.split('\n')[0] || 'Empty block',
+        context: parent?.content.split('\n')[0],
+        pagePath: page.path,
+        pageTitle: page.title,
+        references: block.references,
+        searchable,
+      });
+    }
+  }
+  return results;
+}
+
+function searchPageBlocks(index: BlockSearchResult[], search: string): BlockSearchResult[] {
+  const query = search.trim().toLocaleLowerCase();
+  if (!query) return [];
+  return index.filter((result) => result.searchable.includes(query)).slice(0, 40);
 }
 
 function InlineContent({ text, onLink }: { text: string; onLink: (target: string) => void }) {
@@ -284,44 +349,104 @@ function EmptyState({ onOpen, supported }: { onOpen: () => void; supported: bool
 export function App() {
   const [root, setRoot] = useState<FileSystemDirectoryHandle>();
   const [pages, setPages] = useState<LocalPage[]>(demoIndex);
-  const [selectedTitle, setSelectedTitle] = useState('Welcome to Loam');
+  const [selectedTitle, setSelectedTitle] = useState(todayTitle);
   const [search, setSearch] = useState('');
   const [isDemo, setIsDemo] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState('');
+  const [editorBlocks, setEditorBlocks] = useState<OutlinerBlock[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [notice, setNotice] = useState('');
   const [newPageTitle, setNewPageTitle] = useState('');
+  const [captureText, setCaptureText] = useState('');
+  const searchInput = useRef<HTMLInputElement>(null);
 
   const selectedPage = pages.find((page) => page.title === selectedTitle) ?? pages[0];
   const filteredPages = useMemo(() => {
     const query = search.trim().toLocaleLowerCase();
     if (!query) return pages;
-    return pages.filter((page) =>
-      `${page.title} ${page.path} ${page.content}`.toLocaleLowerCase().includes(query)
-    );
+    return pages.filter((page) => `${page.title} ${page.path}`.toLocaleLowerCase().includes(query));
   }, [pages, search]);
+  const blockIndex = useMemo(() => indexPageBlocks(pages), [pages]);
+  const blockSearchResults = useMemo(
+    () => searchPageBlocks(blockIndex, search),
+    [blockIndex, search]
+  );
+  const selectedBacklinks = useMemo(() => {
+    if (!selectedPage) return [];
+    const target = normalizePageTitle(selectedPage.title);
+    return blockIndex
+      .filter((result) =>
+        result.references.some((reference) => normalizePageTitle(reference) === target)
+      )
+      .slice(0, 30);
+  }, [blockIndex, selectedPage]);
+  const journalPages = useMemo(
+    () =>
+      pages
+        .filter((page) => page.path.toLocaleLowerCase().startsWith('journals/'))
+        .sort((left, right) => left.path.localeCompare(right.path)),
+    [pages]
+  );
+  const selectedJournalIndex = selectedPage
+    ? journalPages.findIndex((page) => page.path === selectedPage.path)
+    : -1;
   const supported = supportsFolderAccess();
-
-  const showNotice = (message: string) => {
+  const showNotice = useCallback((message: string) => {
     setNotice(message);
     window.setTimeout(() => setNotice(''), 4200);
-  };
+  }, []);
+
+  useEffect(() => {
+    const focusSearch = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === 'k') {
+        event.preventDefault();
+        searchInput.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', focusSearch);
+    return () => window.removeEventListener('keydown', focusSearch);
+  }, []);
+
+  useEffect(() => {
+    if (!isEditing || isDemo || !selectedPage?.handle || draft === selectedPage.content) return;
+    const page = selectedPage;
+    const content = draft;
+    const timeout = window.setTimeout(async () => {
+      setIsSaving(true);
+      try {
+        await savePage(page, content, page.content);
+        setPages((current) =>
+          reindexPages(
+            current.map((candidate) =>
+              candidate.path === page.path ? { ...candidate, content } : candidate
+            )
+          )
+        );
+        localStorage.removeItem(`loam:draft:${page.path}`);
+      } catch (error) {
+        localStorage.setItem(`loam:draft:${page.path}`, content);
+        showNotice(error instanceof Error ? error.message : 'Could not autosave this page.');
+      } finally {
+        setIsSaving(false);
+      }
+    }, 900);
+    return () => window.clearTimeout(timeout);
+  }, [draft, isDemo, isEditing, selectedPage, showNotice]);
 
   const openFolder = async () => {
     setIsLoading(true);
     try {
       const handle = await pickLogseqFolder();
-      const loadedPages = await readLogseqFolder(handle);
-      if (!loadedPages.length) {
-        throw new Error(
-          'No markdown pages were found in that folder. Choose your Logseq graph root.'
-        );
+      let loadedPages = await readLogseqFolder(handle);
+      if (!findJournalByDate(loadedPages)) {
+        await ensureJournalFile(handle);
+        loadedPages = await readLogseqFolder(handle);
       }
       setRoot(handle);
       setPages(loadedPages);
-      setSelectedTitle(loadedPages[0].title);
+      setSelectedTitle((findJournalByDate(loadedPages) ?? loadedPages[0]).title);
       setIsDemo(false);
       setIsEditing(false);
       showNotice(`${loadedPages.length} pages connected from your local graph.`);
@@ -356,6 +481,33 @@ export function App() {
     setSearch('');
   };
 
+  const openToday = async () => {
+    const existing = findJournalByDate(pages);
+    if (existing) {
+      selectPage(existing.title);
+      return;
+    }
+    if (!root) return;
+
+    setIsLoading(true);
+    try {
+      await ensureJournalFile(root);
+      const loadedPages = await readLogseqFolder(root);
+      setPages(loadedPages);
+      const today = findJournalByDate(loadedPages);
+      if (today) selectPage(today.title);
+    } catch (error) {
+      showNotice(error instanceof Error ? error.message : 'Could not open today’s journal.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const navigateJournal = (direction: -1 | 1) => {
+    const journal = journalPages[selectedJournalIndex + direction];
+    if (journal) selectPage(journal.title);
+  };
+
   const openLink = (target: string) => {
     const linkedPage = pages.find(
       (page) => normalizePageTitle(page.title) === normalizePageTitle(target)
@@ -371,15 +523,19 @@ export function App() {
 
   const startEditing = () => {
     if (!selectedPage) return;
-    setDraft(selectedPage.content);
+    const recovered = localStorage.getItem(`loam:draft:${selectedPage.path}`);
+    const content = recovered ?? selectedPage.content;
+    setDraft(content);
+    setEditorBlocks(parseMarkdownBlocks(content));
     setIsEditing(true);
+    if (recovered) showNotice('Recovered an unsaved local draft.');
   };
 
   const saveDraft = async () => {
     if (!selectedPage) return;
     setIsSaving(true);
     try {
-      await savePage(selectedPage, draft);
+      if (!isDemo) await savePage(selectedPage, draft, selectedPage.content);
       setPages((current) =>
         reindexPages(
           current.map((page) =>
@@ -388,12 +544,23 @@ export function App() {
         )
       );
       setIsEditing(false);
-      showNotice('Saved to your Logseq folder.');
+      localStorage.removeItem(`loam:draft:${selectedPage.path}`);
+      showNotice(
+        isDemo ? 'Demo changes are kept until you reload.' : 'Saved to your local folder.'
+      );
     } catch (error) {
+      localStorage.setItem(`loam:draft:${selectedPage.path}`, draft);
       showNotice(error instanceof Error ? error.message : 'Could not save this page.');
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const updateEditor = (blocks: OutlinerBlock[]) => {
+    const content = serializeMarkdownBlocks(blocks);
+    setEditorBlocks(blocks);
+    setDraft(content);
+    if (selectedPage) localStorage.setItem(`loam:draft:${selectedPage.path}`, content);
   };
 
   const handleCreatePage = async (event: Event) => {
@@ -411,6 +578,24 @@ export function App() {
       showNotice(`Created “${newPageTitle.trim()}”.`);
     } catch (error) {
       showNotice(error instanceof Error ? error.message : 'Could not create the page.');
+    }
+  };
+
+  const handleCapture = async (event: Event) => {
+    event.preventDefault();
+    if (!root || !captureText.trim()) return;
+    const captured = captureText.trim();
+    setCaptureText('');
+    try {
+      await appendJournalCapture(root, captured);
+      const loadedPages = await readLogseqFolder(root);
+      setPages(loadedPages);
+      const today = findJournalByDate(loadedPages);
+      if (today) selectPage(today.title);
+      showNotice('Captured in today’s journal.');
+    } catch (error) {
+      setCaptureText(captured);
+      showNotice(error instanceof Error ? error.message : 'Could not capture this block.');
     }
   };
 
@@ -462,12 +647,21 @@ export function App() {
             <input
               aria-label='Search pages'
               onInput={(event) => setSearch(event.currentTarget.value)}
-              placeholder='Search pages…'
+              placeholder='Search blocks and pages…'
+              ref={searchInput}
               type='search'
               value={search}
             />
             <kbd>⌘ K</kbd>
           </div>
+
+          <button className='today-button' onClick={openToday} type='button'>
+            <span className='page-nav-icon'>
+              <Icon name='spark' size={15} />
+            </span>
+            <span>Today</span>
+            <span className='today-date'>{journalTitleForDate()}</span>
+          </button>
 
           <div className='sidebar-section-heading'>
             <span>Pages</span>
@@ -490,8 +684,31 @@ export function App() {
                 )}
               </button>
             ))}
-            {!filteredPages.length && <p className='no-results'>No pages match “{search}”.</p>}
+            {!filteredPages.length && !blockSearchResults.length && (
+              <p className='no-results'>No blocks or pages match “{search}”.</p>
+            )}
           </nav>
+
+          {blockSearchResults.length > 0 && (
+            <section className='block-results' aria-label='Matching blocks'>
+              <div className='sidebar-section-heading'>
+                <span>Matching blocks</span>
+                <span className='count-pill'>{blockSearchResults.length}</span>
+              </div>
+              {blockSearchResults.map((result) => (
+                <button
+                  className='block-result'
+                  key={`${result.pagePath}-${result.blockId}`}
+                  onClick={() => selectPage(result.pageTitle)}
+                  type='button'
+                >
+                  <span className='block-result-page'>{result.pageTitle}</span>
+                  {result.context && <span className='block-result-context'>{result.context}</span>}
+                  <span className='block-result-content'>{result.content}</span>
+                </button>
+              ))}
+            </section>
+          )}
 
           <div className='sidebar-bottom'>
             <div className='folder-tip'>
@@ -508,6 +725,19 @@ export function App() {
             >
               <Icon name='refresh' size={15} /> Refresh from disk
             </button>
+            {root && (
+              <form className='new-page-form' onSubmit={handleCreatePage}>
+                <input
+                  aria-label='Create a new page'
+                  onInput={(event) => setNewPageTitle(event.currentTarget.value)}
+                  placeholder='New page title…'
+                  value={newPageTitle}
+                />
+                <button aria-label='Create page' type='submit'>
+                  <Icon name='plus' size={15} />
+                </button>
+              </form>
+            )}
           </div>
         </aside>
 
@@ -521,25 +751,37 @@ export function App() {
                   <span>{selectedPage.title}</span>
                 </div>
                 <div className='page-actions'>
+                  {selectedJournalIndex >= 0 && !isEditing && (
+                    <fieldset className='journal-navigation'>
+                      <legend className='sr-only'>Journal navigation</legend>
+                      <button
+                        aria-label='Previous journal'
+                        disabled={selectedJournalIndex === 0}
+                        onClick={() => navigateJournal(-1)}
+                        type='button'
+                      >
+                        ‹
+                      </button>
+                      <button
+                        aria-label='Next journal'
+                        disabled={selectedJournalIndex === journalPages.length - 1}
+                        onClick={() => navigateJournal(1)}
+                        type='button'
+                      >
+                        ›
+                      </button>
+                    </fieldset>
+                  )}
                   {isEditing ? (
-                    <>
-                      <button
-                        className='button button-quiet'
-                        onClick={() => setIsEditing(false)}
-                        type='button'
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        className='button button-primary save-button'
-                        disabled={isSaving}
-                        onClick={saveDraft}
-                        type='button'
-                      >
-                        <Icon name='check' size={16} />
-                        {isSaving ? 'Saving…' : 'Save page'}
-                      </button>
-                    </>
+                    <button
+                      className='button button-primary save-button'
+                      disabled={isSaving}
+                      onClick={saveDraft}
+                      type='button'
+                    >
+                      <Icon name='check' size={16} />
+                      {isSaving ? 'Saving…' : isDemo ? 'Keep demo edit' : 'Done'}
+                    </button>
                   ) : (
                     <button className='button button-quiet' onClick={startEditing} type='button'>
                       <Icon name='edit' size={16} /> Edit page
@@ -564,10 +806,11 @@ export function App() {
                   </div>
                 </div>
                 {isEditing ? (
-                  <textarea
-                    className='page-editor'
-                    onInput={(event) => setDraft(event.currentTarget.value)}
-                    value={draft}
+                  <OutlinerEditor
+                    ariaLabel={`Edit ${selectedPage.title}`}
+                    blocks={editorBlocks}
+                    className='page-outliner'
+                    onChange={updateEditor}
                   />
                 ) : (
                   <PageBody onLink={openLink} page={selectedPage} />
@@ -599,14 +842,22 @@ export function App() {
                     <p className='relation-title'>Backlinks</p>
                     <p className='relation-subtitle'>Pages pointing here</p>
                   </div>
-                  <span className='relation-count'>{selectedPage.backlinks.length}</span>
+                  <span className='relation-count'>{selectedBacklinks.length}</span>
                 </div>
-                {selectedPage.backlinks.length ? (
+                {selectedBacklinks.length ? (
                   <div className='relation-list'>
-                    {selectedPage.backlinks.map((title) => (
-                      <button key={title} onClick={() => selectPage(title)} type='button'>
+                    {selectedBacklinks.map((backlink) => (
+                      <button
+                        key={`${backlink.pagePath}-${backlink.blockId}`}
+                        onClick={() => selectPage(backlink.pageTitle)}
+                        title={backlink.content}
+                        type='button'
+                      >
                         <span className='relation-bullet' />
-                        {title}
+                        <span className='relation-backlink-copy'>
+                          <strong>{backlink.pageTitle}</strong>
+                          <small>{backlink.content}</small>
+                        </span>
                         <Icon name='chevron' size={14} />
                       </button>
                     ))}
@@ -665,16 +916,16 @@ export function App() {
         </aside>
       </div>
 
-      {root && (
-        <form className='quick-create' onSubmit={handleCreatePage}>
+      {root && !isEditing && (
+        <form className='quick-create' onSubmit={handleCapture}>
           <Icon name='plus' size={17} />
           <input
-            aria-label='Create a new page'
-            onInput={(event) => setNewPageTitle(event.currentTarget.value)}
-            placeholder='New page title…'
-            value={newPageTitle}
+            aria-label='Quick capture to today’s journal'
+            onInput={(event) => setCaptureText(event.currentTarget.value)}
+            placeholder='Capture to today…'
+            value={captureText}
           />
-          <button type='submit'>
+          <button aria-label='Capture block' type='submit'>
             <Icon name='arrow' size={16} />
           </button>
         </form>

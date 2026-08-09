@@ -1,7 +1,7 @@
 {
-  "name": "Loam — a softer graph reader",
+  "name": "Loam — local-first outliner",
   "short_name": "Loam",
-  "description": "A local-first Logseq graph reader for pages, backlinks, and edits.",
+  "description": "A journal-first block outliner that reads and writes your local Markdown workspace.",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#f7f7f2",

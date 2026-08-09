@@ -2,15 +2,16 @@
 
 ## Overview
 
-Loam is a local-first PWA for reading and editing a Logseq graph. The first release keeps the interaction model deliberately small: open a folder, select a page, follow links, inspect backlinks, and save edits back to the same folder.
+Loam is a local-first, journal-first PWA for editing a Markdown workspace as a structured block outliner. The first MVP opens today's journal, supports independent nested block editing, searches at block granularity, follows references, shows contextual backlinks, and saves portable Markdown back to the same folder.
 
 ## Architecture
 
 ```text
 Browser
   ├─ File System Access API ──> selected Logseq folder
+  ├─ Core block model ────────> hierarchy, editing operations, metadata
   ├─ Core parser/indexer ─────> page titles, outgoing links, backlinks
-  └─ Preact UI ───────────────> page reader, editor, search, page map
+  └─ Preact UI ───────────────> journal, outliner, block search, page map
                                     │
                                     └─ static Vite build ──> GitHub Pages
 ```
@@ -19,17 +20,20 @@ The app is client-only when deployed. No graph content is sent to a Loam server.
 
 ### Core package
 
-`packages/core/src/logseq.ts` contains framework-agnostic helpers for:
+`packages/core/src/logseq.ts` and `packages/core/src/blocks.ts` contain framework-agnostic helpers for:
 
 - normalizing Logseq page names and filenames;
 - extracting `[[Page]]` and `[[Page|alias]]` references;
 - building outgoing-link and backlink relationships.
+- parsing and serializing portable nested block Markdown;
+- immutable split, merge, indent, outdent, move, collapse, and safe-delete operations;
+- extracting block properties, references, and tags.
 
 The core package has no browser or filesystem dependency, so the indexing behavior can be tested independently.
 
 ### Web package
 
-`packages/web/src/client/logseq.ts` adapts the browser File System Access API. It recursively reads `.md` files, retains each file handle for writes, and creates new pages under `pages/`. `App.tsx` owns the current graph selection and UI state; the rendered page body intentionally supports a small, safe subset of Logseq markdown rather than trying to be a full Markdown engine.
+`packages/web/src/client/logseq.ts` adapts the browser File System Access API. It recursively reads `.md` files, retains each file handle for writes, creates journal and page files, and detects external changes before overwriting. `OutlinerEditor.tsx` owns keyboard, touch, focus, and undo behavior over the canonical core block model. `App.tsx` coordinates the workspace, journal, autosave, block search, references, and backlinks.
 
 ### Local file behavior
 
