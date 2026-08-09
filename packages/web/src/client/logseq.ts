@@ -18,6 +18,37 @@ export function supportsFolderAccess(): boolean {
   return typeof window !== 'undefined' && typeof window.showDirectoryPicker === 'function';
 }
 
+function journalDateParts(date: Date): { day: string; month: string; year: string } {
+  return {
+    day: String(date.getDate()).padStart(2, '0'),
+    month: String(date.getMonth() + 1).padStart(2, '0'),
+    year: String(date.getFullYear()),
+  };
+}
+
+/** Returns the portable Logseq journal path for a date in the user's local timezone. */
+export function journalPathForDate(date = new Date()): string {
+  const { day, month, year } = journalDateParts(date);
+  return `journals/${year}_${month}_${day}.md`;
+}
+
+/** Returns the ISO journal label for a date in the user's local timezone. */
+export function journalTitleForDate(date = new Date()): string {
+  const { day, month, year } = journalDateParts(date);
+  return `${year}-${month}-${day}`;
+}
+
+export function findJournalByDate(pages: LocalPage[], date = new Date()): LocalPage | undefined {
+  const targetPath = journalPathForDate(date).toLocaleLowerCase();
+  return pages.find((page) => page.path.toLocaleLowerCase() === targetPath);
+}
+
+/** Uses an ISO date as the logical page identity for journal filenames. */
+export function localPageTitleFromPath(path: string): string {
+  const journal = path.match(/^journals\/(\d{4})[_-](\d{2})[_-](\d{2})\.md$/i);
+  return journal ? `${journal[1]}-${journal[2]}-${journal[3]}` : pageTitleFromPath(path);
+}
+
 export async function pickLogseqFolder(): Promise<FileSystemDirectoryHandle> {
   if (!window.showDirectoryPicker) {
     throw new Error(
@@ -61,7 +92,7 @@ async function collectMarkdownFiles(
 
     const file = await entry.getFile();
     inputs.push({
-      title: pageTitleFromPath(relativePath),
+      title: localPageTitleFromPath(relativePath),
       path: relativePath,
       content: await file.text(),
     });
@@ -69,13 +100,54 @@ async function collectMarkdownFiles(
   }
 }
 
-export async function savePage(page: LocalPage, content: string): Promise<void> {
+export async function savePage(
+  page: LocalPage,
+  content: string,
+  expectedContent?: string
+): Promise<void> {
   if (!page.handle) {
     throw new Error('Demo pages are read-only. Open a local Logseq folder to save changes.');
   }
 
+  if (expectedContent !== undefined) {
+    const currentContent = await (await page.handle.getFile()).text();
+    if (currentContent !== expectedContent) {
+      throw new Error(
+        'This page changed on disk while you were editing. Refresh the graph before saving.'
+      );
+    }
+  }
+
   const writable = await page.handle.createWritable();
   await writable.write(content);
+  await writable.close();
+}
+
+/** Creates today's journal lazily and returns its file handle. */
+export async function ensureJournalFile(
+  root: FileSystemDirectoryHandle,
+  date = new Date()
+): Promise<FileSystemFileHandle> {
+  const journalsDirectory = await root.getDirectoryHandle('journals', { create: true });
+  const filename = journalPathForDate(date).split('/').pop();
+  if (!filename) throw new Error('Could not resolve the journal filename.');
+  return journalsDirectory.getFileHandle(filename, { create: true });
+}
+
+/** Appends a top-level block to a journal after reading the latest content from disk. */
+export async function appendJournalCapture(
+  root: FileSystemDirectoryHandle,
+  content: string,
+  date = new Date()
+): Promise<void> {
+  const trimmed = content.trim();
+  if (!trimmed) return;
+
+  const handle = await ensureJournalFile(root, date);
+  const current = await (await handle.getFile()).text();
+  const separator = current.length === 0 || current.endsWith('\n') ? '' : '\n';
+  const writable = await handle.createWritable();
+  await writable.write(`${current}${separator}- ${trimmed}\n`);
   await writable.close();
 }
 
@@ -86,7 +158,8 @@ export async function createPageFile(
   const pagesDirectory = await root.getDirectoryHandle('pages', { create: true });
   const filename = `${title
     .trim()
-    .replace(/[\\/:*?"<>|]/g, '-')
+    .replaceAll('/', '___')
+    .replace(/[\\:*?"<>|]/g, '-')
     .replace(/\s+/g, '_')}.md`;
   let file: FileSystemFileHandle;
   try {

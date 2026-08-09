@@ -1,6 +1,6 @@
 # Loam
 
-Loam is a small, local-first PWA for reading and editing a Logseq graph. It is designed to deploy as a static site on GitHub Pages: your markdown files are opened directly in the browser and are never sent to a server.
+Loam is a small, journal-first block outliner for a local Markdown workspace. It is designed to deploy as a static PWA on GitHub Pages: your files are opened directly in the browser and are never sent to a server.
 
 ## What is included
 
@@ -8,12 +8,15 @@ Loam is a small, local-first PWA for reading and editing a Logseq graph. It is d
 - Recursively index markdown pages from the graph root, including `pages/` and `journals/`.
 - Read lightweight Logseq markdown with headings, bullets, tasks, tags, and `[[page links]]`.
 - Follow page links and inspect backlinks in a two-way page map.
-- Edit and save pages back to the selected local folder.
+- Edit nested blocks independently with split, merge, indent, outdent, reorder, collapse, undo, and redo.
+- Autosave portable nested Markdown back to the selected local folder with external-change protection and local draft recovery.
+- Open today's journal first, navigate existing journals, and quick-capture a block to today from anywhere.
+- Search individual blocks, including references, tags, and properties, with parent context.
 - Create a new page under the graph's `pages/` directory.
 - Refresh the index after changing files outside Loam.
 - Install the static shell as a PWA and use the demo graph before opening a folder.
 
-Queries, charts, and graph visualizations are intentionally out of scope for this starter.
+Drag-and-drop, focused block mode, multi-block selection, queries, charts, and graph visualizations remain out of scope for this first MVP.
 
 ## Local development
 

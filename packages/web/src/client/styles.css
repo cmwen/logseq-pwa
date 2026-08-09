@@ -16,6 +16,7 @@
 }
 
 * { box-sizing: border-box; }
+.sr-only { height: 1px; margin: -1px; overflow: hidden; padding: 0; position: absolute; width: 1px; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 
 body {
   background: var(--canvas);
@@ -61,6 +62,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
 .search-box input { background: none; border: 0; color: var(--ink); font-size: 12px; min-width: 0; outline: 0; width: 100%; }
 .search-box input::placeholder { color: #9ba098; }
 .search-box kbd { color: #adb1a9; font-family: 'DM Mono', monospace; font-size: 9px; white-space: nowrap; }
+.today-button { align-items: center; background: #e8ded5; border: 0; border-radius: 7px; color: #65584f; cursor: pointer; display: flex; font-size: 12px; font-weight: 600; gap: 9px; margin: -13px 4px 20px; min-height: 38px; padding: 0 10px; text-align: left; width: calc(100% - 8px); }
+.today-button:hover { background: #e4d5c9; color: var(--ink); }
+.today-button .page-nav-icon { color: var(--accent); }
+.today-date { color: #998a80; font-family: 'DM Mono', monospace; font-size: 8px; font-weight: 400; margin-left: auto; }
 .sidebar-section-heading { align-items: center; color: var(--muted); display: flex; font-family: 'DM Mono', monospace; font-size: 9px; justify-content: space-between; letter-spacing: .11em; padding: 0 11px 9px; text-transform: uppercase; }
 .count-pill, .page-nav-count, .relation-count { align-items: center; background: #e2e4de; border-radius: 20px; color: #7e847b; display: inline-flex; font-family: 'DM Mono', monospace; font-size: 9px; justify-content: center; min-width: 19px; padding: 3px 6px; }
 .page-list { display: flex; flex-direction: column; gap: 2px; }
@@ -72,10 +77,20 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
 .page-nav-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .page-nav-count { margin-left: auto; min-width: 18px; padding: 2px 5px; }
 .no-results { color: var(--muted); font-size: 11px; line-height: 1.5; padding: 0 11px; }
+.block-results { border-top: 1px solid #e1e3dc; margin-top: 18px; max-height: min(41vh, 420px); overflow-y: auto; padding-top: 17px; }
+.block-result { background: transparent; border: 0; border-radius: 6px; color: #6e746b; cursor: pointer; display: flex; flex-direction: column; gap: 2px; margin-bottom: 3px; padding: 8px 10px; text-align: left; width: 100%; }
+.block-result:hover { background: #e8eae3; }
+.block-result-page { color: var(--accent-deep); font-family: 'DM Mono', monospace; font-size: 8px; text-transform: uppercase; }
+.block-result-context { color: #9a9f96; font-size: 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; width: 100%; }
+.block-result-content { color: #5f665d; font-size: 11px; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; width: 100%; }
 .sidebar-bottom { border-top: 1px solid #e1e3dc; margin-top: auto; padding: 15px 5px 0; }
 .folder-tip { color: #8c9389; font-size: 10px; gap: 7px; line-height: 1.4; padding: 0 6px 12px; }
 .folder-tip svg { color: #b08a64; flex: 0 0 auto; }
 .sidebar-refresh { font-size: 10px; justify-content: flex-start; min-height: 30px; padding: 0 6px; }
+.new-page-form { align-items: center; background: #e7e9e2; border-radius: 6px; display: flex; margin-top: 7px; min-height: 33px; padding: 0 4px 0 9px; }
+.new-page-form input { background: transparent; border: 0; color: var(--ink); font-size: 10px; min-width: 0; outline: 0; width: 100%; }
+.new-page-form button { align-items: center; background: transparent; border: 0; border-radius: 5px; color: var(--muted-dark); cursor: pointer; display: flex; height: 26px; justify-content: center; width: 28px; }
+.new-page-form button:hover { background: var(--paper); color: var(--accent); }
 
 .content-area { background: var(--canvas); min-width: 0; padding: 26px clamp(30px, 5vw, 86px) 56px; }
 .page-toolbar { align-items: center; display: flex; justify-content: space-between; min-height: 34px; }
@@ -83,6 +98,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
 .breadcrumbs svg { color: #b8bcb2; }
 .breadcrumbs span:last-child { color: #6d746c; }
 .page-actions { gap: 5px; }
+.journal-navigation { align-items: center; background: #eeeee8; border: 0; border-radius: 7px; display: flex; gap: 1px; margin: 0 3px 0 0; min-width: 0; padding: 2px; }
+.journal-navigation button { background: transparent; border: 0; border-radius: 5px; color: #777d74; cursor: pointer; font-size: 20px; height: 29px; line-height: 1; width: 29px; }
+.journal-navigation button:hover { background: var(--paper); color: var(--accent); }
+.journal-navigation button:disabled { cursor: default; opacity: .3; }
 .save-button { min-height: 34px; }
 .page-card { background: var(--paper); border: 1px solid #eae9e1; border-radius: 12px; box-shadow: var(--shadow); margin-top: 21px; min-height: 570px; overflow: hidden; padding: clamp(31px, 5vw, 61px) clamp(29px, 5vw, 66px) 66px; }
 .page-heading { align-items: flex-start; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; padding-bottom: 24px; }
@@ -109,6 +128,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
 .inline-link:hover { background: #f0cbbc; color: #843a2b; }
 .tag { background: #e8eee8; border-radius: 4px; color: #62806b; font-family: 'DM Mono', monospace; font-size: .82em; padding: 2px 5px; }
 .page-editor { background: #fbfbf7; border: 1px solid #e4e5dc; border-radius: 6px; color: #50564d; display: block; font-family: 'DM Mono', monospace; font-size: 12px; line-height: 1.75; margin-top: 28px; min-height: 430px; padding: 18px; resize: vertical; width: 100%; }
+.page-outliner { color: #50564d; font-size: 14px; margin-top: 27px; min-height: 360px; }
 .privacy-line { align-items: center; color: #a5a99f; display: flex; font-family: 'DM Mono', monospace; font-size: 9px; gap: 7px; justify-content: center; letter-spacing: .01em; margin: 20px 0 0; text-align: center; }
 .privacy-lock { color: #c9a57f; font-size: 13px; }
 
@@ -130,6 +150,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
 .relation-list button svg { color: #b5bbb1; margin-left: auto; }
 .relation-bullet { background: #d98b72; border-radius: 50%; height: 5px; width: 5px; }
 .relation-list button.relation-missing { color: #a1a69e; font-style: italic; }
+.relation-backlink-copy { display: flex; flex-direction: column; min-width: 0; }
+.relation-backlink-copy strong { color: #666c63; font-size: 10px; font-weight: 600; }
+.relation-backlink-copy small { color: #989d94; font-size: 9px; max-width: 165px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .relation-missing .relation-bullet { background: #c4c9c1; border: 1px dashed #9da69b; height: 6px; width: 6px; }
 .relation-empty { color: #a2a69e; font-size: 11px; line-height: 1.5; margin: 15px 0 0; }
 .inspector-tip { background: #f3ece5; border-radius: 8px; color: #8a796d; display: flex; font-size: 10px; gap: 9px; line-height: 1.5; margin: 28px 0 0; padding: 12px 11px; }
@@ -167,14 +190,17 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
   .sidebar { border-bottom: 1px solid var(--line); border-right: 0; padding: 15px 12px 13px; }
   .sidebar-intro { padding: 0 5px 13px; }
   .search-box { margin-bottom: 12px; }
+  .today-button { margin: 0 4px 12px; }
   .page-list { flex-direction: row; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
   .page-list::-webkit-scrollbar { display: none; }
   .page-nav-item { flex: 0 0 auto; max-width: 170px; min-height: 32px; padding: 0 9px; width: auto; }
-  .sidebar-section-heading, .sidebar-bottom { display: none; }
+  .sidebar > .sidebar-section-heading, .sidebar-bottom { display: none; }
+  .block-results { display: none; }
   .content-area { padding: 18px 13px 67px; }
   .page-toolbar { padding: 0 5px; }
   .breadcrumbs span:last-child { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .page-card { margin-top: 14px; min-height: 500px; padding: 28px 22px 42px; }
+  .page-outliner { margin-top: 20px; min-height: 330px; }
   .page-heading { display: block; }
   .page-heading h1 { font-size: 34px; }
   .page-stats { padding-top: 15px; }

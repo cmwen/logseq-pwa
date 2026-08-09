@@ -18,6 +18,7 @@ export interface IndexedPage extends PageInput {
 export function normalizePageTitle(title: string): string {
   return decodeURIComponent(title)
     .replace(/\.md$/i, '')
+    .replaceAll('___', '/')
     .replaceAll('_', ' ')
     .replace(/\s+/g, ' ')
     .trim()
@@ -29,6 +30,7 @@ export function pageTitleFromPath(path: string): string {
   const filename = path.split('/').pop() ?? path;
   return decodeURIComponent(filename)
     .replace(/\.md$/i, '')
+    .replaceAll('___', '/')
     .replaceAll('_', ' ')
     .replace(/\s+/g, ' ')
     .trim();

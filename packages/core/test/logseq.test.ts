@@ -8,7 +8,8 @@ import {
 
 describe('Logseq helpers', () => {
   it('normalizes page names from links and filenames', () => {
-    expect(normalizePageTitle('Project___Now.md')).toBe('project now');
+    expect(normalizePageTitle('Project___Now.md')).toBe('project/now');
+    expect(pageTitleFromPath('pages/Project___Now___Recall.md')).toBe('Project/Now/Recall');
     expect(pageTitleFromPath('pages/Weekly%20Review.md')).toBe('Weekly Review');
   });
 
