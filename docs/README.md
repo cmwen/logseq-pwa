@@ -7,19 +7,8 @@ This directory contains project documentation and guides.
 - **design.md** - Architecture and technical design decisions
 - **development.md** - Development guide and setup instructions
 - **api.md** - API documentation for public interfaces
-- **contributing.md** - Guidelines for contributors
-
-## Template Usage
-
-This is a template repository. To use it:
-
-1. Click "Use this template" on GitHub or clone the repository
-2. Update package names in all `package.json` files
-3. Update repository URLs in `package.json` files
-4. Update the README.md with your project details
-5. Configure GitHub secrets for CI/CD:
-   - `NPM_TOKEN` - For publishing to npm
-   - `GITHUB_TOKEN` - Automatically provided by GitHub
+- **PRD.md** - Product requirements and scope
+- **ARD.md** - Block-model architecture decision
 
 ## Quick Start
 
@@ -33,10 +22,8 @@ pnpm build
 # Run tests
 pnpm test
 
-# Start development
-cd packages/cli && pnpm build
-cd packages/web && pnpm build
-cd packages/mcp && pnpm build
+# Start the browser app
+pnpm --filter @loam/web dev
 ```
 
 ## Package Structure

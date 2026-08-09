@@ -1,4 +1,11 @@
-import { buildPageIndex, type IndexedPage, type PageInput, pageTitleFromPath } from '@loam/core';
+import {
+  buildPageIndex,
+  type IndexedPage,
+  type PageInput,
+  pageFilenameForTitle,
+  pageTitleFromPath,
+  serializeCaptureBlockMarkdown,
+} from '@loam/core';
 
 export interface LocalPage extends IndexedPage {
   handle?: FileSystemFileHandle;
@@ -16,6 +23,53 @@ declare global {
 
 export function supportsFolderAccess(): boolean {
   return typeof window !== 'undefined' && typeof window.showDirectoryPicker === 'function';
+}
+
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Path validation deliberately handles every escape case before touching the selected folder.
+function normalizedLocalPath(pagePath: string, source: string): string | null {
+  const value = source.trim();
+  if (!value || /^(?:[a-z][a-z\d+.-]*:|\/\/)/iu.test(value)) return null;
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(value.split(/[?#]/u, 1)[0] ?? '');
+  } catch {
+    return null;
+  }
+  const segments = decoded.replaceAll('\\', '/').split('/');
+  const base = decoded.startsWith('/') ? [] : pagePath.split('/').slice(0, -1);
+  for (const segment of segments) {
+    if (!segment || segment === '.') continue;
+    if (segment === '..') {
+      if (!base.length) return null;
+      base.pop();
+      continue;
+    }
+    if (segment.includes('\u0000')) return null;
+    base.push(segment);
+  }
+  return base.join('/');
+}
+
+/** Resolves a relative image/attachment path without allowing root escape. */
+export async function resolveLocalAttachment(
+  root: FileSystemDirectoryHandle,
+  pagePath: string,
+  source: string
+): Promise<File | null> {
+  const path = normalizedLocalPath(pagePath, source);
+  if (!path) return null;
+  let directory = root;
+  const segments = path.split('/');
+  const filename = segments.pop();
+  if (!filename) return null;
+  try {
+    for (const segment of segments) directory = await directory.getDirectoryHandle(segment);
+    const handle = await directory.getFileHandle(filename);
+    return handle.getFile();
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'NotFoundError') return null;
+    throw error;
+  }
 }
 
 function journalDateParts(date: Date): { day: string; month: string; year: string } {
@@ -140,14 +194,15 @@ export async function appendJournalCapture(
   content: string,
   date = new Date()
 ): Promise<void> {
-  const trimmed = content.trim();
-  if (!trimmed) return;
+  const block = serializeCaptureBlockMarkdown(content);
 
   const handle = await ensureJournalFile(root, date);
-  const current = await (await handle.getFile()).text();
+  const file = await handle.getFile();
+  const current = await file.text();
   const separator = current.length === 0 || current.endsWith('\n') ? '' : '\n';
-  const writable = await handle.createWritable();
-  await writable.write(`${current}${separator}- ${trimmed}\n`);
+  const writable = await handle.createWritable({ keepExistingData: true });
+  await writable.seek(file.size);
+  await writable.write(`${separator}${block}`);
   await writable.close();
 }
 
@@ -156,11 +211,7 @@ export async function createPageFile(
   title: string
 ): Promise<void> {
   const pagesDirectory = await root.getDirectoryHandle('pages', { create: true });
-  const filename = `${title
-    .trim()
-    .replaceAll('/', '___')
-    .replace(/[\\:*?"<>|]/g, '-')
-    .replace(/\s+/g, '_')}.md`;
+  const filename = pageFilenameForTitle(title);
   let file: FileSystemFileHandle;
   try {
     await pagesDirectory.getFileHandle(filename);
@@ -175,6 +226,8 @@ export async function createPageFile(
     file = await pagesDirectory.getFileHandle(filename, { create: true });
   }
   const writable = await file.createWritable();
-  await writable.write(`# ${title.trim()}\n\n- `);
+  // New pages deliberately start as a safe bullet document. A heading would
+  // force the page into the raw Markdown editor before the user has written it.
+  await writable.write('- ');
   await writable.close();
 }

@@ -10,6 +10,7 @@ import {
   outdentBlock,
   parseBlockMarkdown,
   serializeBlockMarkdown,
+  serializeCaptureBlockMarkdown,
   splitBlock,
   toggleBlockCollapsed,
   updateBlockContent,
@@ -21,6 +22,11 @@ function ids(...values: string[]): () => string {
 }
 
 describe('block Markdown', () => {
+  it('serializes multiline captures without allowing new top-level blocks', () => {
+    expect(serializeCaptureBlockMarkdown('First line\n- nested line')).toBe(
+      '- First line\n  - nested line\n'
+    );
+  });
   it('parses nested Logseq bullets into ordered stable blocks and metadata', () => {
     const blocks = parseBlockMarkdown(
       [

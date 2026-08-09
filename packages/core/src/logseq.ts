@@ -36,6 +36,22 @@ export function pageTitleFromPath(path: string): string {
     .trim();
 }
 
+/** Converts a portable page title into the canonical filename used under `pages/`. */
+export function pageFilenameForTitle(title: string): string {
+  const trimmed = title.trim();
+  if (!trimmed || trimmed.includes('\u0000')) {
+    throw new Error('Page title must not be empty or contain NUL characters.');
+  }
+  return `${trimmed
+    .replaceAll('/', '___')
+    .replaceAll('\\', '-')
+    .replace(/[:*?"<>|]/gu, '-')
+    .split('')
+    .map((character) => (character.charCodeAt(0) < 32 ? '-' : character))
+    .join('')
+    .replace(/\s+/gu, '_')}.md`;
+}
+
 /** Reads Logseq's [[Page Name]] and [[Page Name|alias]] references from markdown. */
 export function extractPageLinks(content: string): PageLink[] {
   const links: PageLink[] = [];

@@ -1,4 +1,4 @@
-import { buildPageIndex, normalizePageTitle, type PageInput, parseBlockMarkdown } from '@loam/core';
+import { buildPageIndex, flattenBlockTree, normalizePageTitle, type PageInput } from '@loam/core';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import {
   appendJournalCapture,
@@ -14,8 +14,10 @@ import {
   supportsFolderAccess,
 } from './logseq.js';
 import { MarkdownBody } from './MarkdownBody.js';
+import { createBlockNavigationTarget, rememberSearchQuery } from './navigation-model.js';
 import { OutlinerEditor } from './OutlinerEditor.js';
 import {
+  assessOutlinerSafety,
   type OutlinerBlock,
   parseMarkdownBlocks,
   serializeMarkdownBlocks,
@@ -192,7 +194,7 @@ interface BlockSearchResult {
 function indexPageBlocks(pages: LocalPage[]): BlockSearchResult[] {
   const results: BlockSearchResult[] = [];
   for (const page of pages) {
-    const blocks = parseBlockMarkdown(page.content);
+    const blocks = flattenBlockTree(parseMarkdownBlocks(page.content, page.path, page.title));
     const byId = new Map(blocks.map((block) => [block.id, block]));
     for (const block of blocks) {
       const searchable = [
@@ -257,6 +259,10 @@ export function App() {
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [editorBlocks, setEditorBlocks] = useState<OutlinerBlock[]>([]);
+  const [editorKind, setEditorKind] = useState<'outliner' | 'raw'>('outliner');
+  const [editorFinalNewline, setEditorFinalNewline] = useState(false);
+  const [focusedBlockId, setFocusedBlockId] = useState<string>();
+  const [searchHistory, setSearchHistory] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [notice, setNotice] = useState('');
@@ -348,6 +354,7 @@ export function App() {
       }
       setRoot(handle);
       setPages(loadedPages);
+      setFocusedBlockId(undefined);
       setSelectedTitle((findJournalByDate(loadedPages) ?? loadedPages[0]).title);
       setIsDemo(false);
       setIsEditing(false);
@@ -366,6 +373,7 @@ export function App() {
     try {
       const loadedPages = await readLogseqFolder(root);
       setPages(loadedPages);
+      setFocusedBlockId(undefined);
       setSelectedTitle((current) =>
         loadedPages.some((page) => page.title === current) ? current : (loadedPages[0]?.title ?? '')
       );
@@ -377,10 +385,18 @@ export function App() {
     }
   };
 
-  const selectPage = (title: string) => {
+  const selectPage = (title: string, blockId?: string) => {
     setSelectedTitle(title);
+    setFocusedBlockId(blockId);
     setIsEditing(false);
-    setSearch('');
+  };
+
+  const openBlock = (result: BlockSearchResult) => {
+    const page = pages.find((candidate) => candidate.path === result.pagePath);
+    if (!page) return;
+    const target = createBlockNavigationTarget(page, result.blockId, search);
+    setSearchHistory((current) => rememberSearchQuery(current, target.query));
+    selectPage(target.pageTitle, target.blockId);
   };
 
   const openToday = async () => {
@@ -428,7 +444,10 @@ export function App() {
     const recovered = localStorage.getItem(`loam:draft:${selectedPage.path}`);
     const content = recovered ?? selectedPage.content;
     setDraft(content);
-    setEditorBlocks(parseMarkdownBlocks(content));
+    setEditorFinalNewline(content.endsWith('\n'));
+    const safety = assessOutlinerSafety(content);
+    setEditorKind(safety.safe ? 'outliner' : 'raw');
+    setEditorBlocks(parseMarkdownBlocks(content, selectedPage.path, selectedPage.title));
     setIsEditing(true);
     if (recovered) showNotice('Recovered an unsaved local draft.');
   };
@@ -459,7 +478,7 @@ export function App() {
   };
 
   const updateEditor = (blocks: OutlinerBlock[]) => {
-    const content = serializeMarkdownBlocks(blocks);
+    const content = serializeMarkdownBlocks(blocks, editorFinalNewline);
     setEditorBlocks(blocks);
     setDraft(content);
     if (selectedPage) localStorage.setItem(`loam:draft:${selectedPage.path}`, content);
@@ -548,13 +567,24 @@ export function App() {
             <Icon name='search' size={16} />
             <input
               aria-label='Search pages'
-              onInput={(event) => setSearch(event.currentTarget.value)}
+              aria-keyshortcuts='Meta+K Control+K'
+              list='search-history'
+              onInput={(event) => {
+                const value = event.currentTarget.value;
+                setSearch(value);
+                setSearchHistory((current) => rememberSearchQuery(current, value));
+              }}
               placeholder='Search blocks and pages…'
               ref={searchInput}
               type='search'
               value={search}
             />
             <kbd>⌘ K</kbd>
+            <datalist id='search-history'>
+              {searchHistory.map((query) => (
+                <option key={query} value={query} />
+              ))}
+            </datalist>
           </div>
 
           <button className='today-button' onClick={openToday} type='button'>
@@ -573,6 +603,7 @@ export function App() {
             {filteredPages.map((page) => (
               <button
                 className={`page-nav-item ${page.title === selectedPage?.title ? 'page-nav-active' : ''}`}
+                aria-current={page.title === selectedPage?.title ? 'page' : undefined}
                 key={page.path}
                 onClick={() => selectPage(page.title)}
                 type='button'
@@ -601,7 +632,8 @@ export function App() {
                 <button
                   className='block-result'
                   key={`${result.pagePath}-${result.blockId}`}
-                  onClick={() => selectPage(result.pageTitle)}
+                  onClick={() => openBlock(result)}
+                  title={`Open ${result.pageTitle} at this block`}
                   type='button'
                 >
                   <span className='block-result-page'>{result.pageTitle}</span>
@@ -652,6 +684,15 @@ export function App() {
                   <Icon name='chevron' size={14} />
                   <span>{selectedPage.title}</span>
                 </div>
+                {focusedBlockId && !isEditing && (
+                  <button
+                    className='focus-exit-button'
+                    onClick={() => setFocusedBlockId(undefined)}
+                    type='button'
+                  >
+                    Focused block · Exit
+                  </button>
+                )}
                 <div className='page-actions'>
                   {selectedJournalIndex >= 0 && !isEditing && (
                     <fieldset className='journal-navigation'>
@@ -708,14 +749,47 @@ export function App() {
                   </div>
                 </div>
                 {isEditing ? (
-                  <OutlinerEditor
-                    ariaLabel={`Edit ${selectedPage.title}`}
-                    blocks={editorBlocks}
-                    className='page-outliner'
-                    onChange={updateEditor}
-                  />
+                  editorKind === 'raw' ? (
+                    <div className='raw-editor-wrap'>
+                      <div className='raw-editor-heading'>
+                        <p className='editor-mode-label'>
+                          Raw Markdown fallback · source preserved exactly
+                        </p>
+                        <p className='editor-mode-reason'>
+                          {assessOutlinerSafety(draft).reasons.join(', ')}
+                        </p>
+                      </div>
+                      <textarea
+                        aria-label={`Raw Markdown for ${selectedPage.title}`}
+                        className='page-editor'
+                        onInput={(event) => {
+                          const content = event.currentTarget.value;
+                          setDraft(content);
+                          localStorage.setItem(`loam:draft:${selectedPage.path}`, content);
+                        }}
+                        value={draft}
+                        spellcheck={false}
+                      />
+                    </div>
+                  ) : (
+                    <OutlinerEditor
+                      ariaLabel={`Edit ${selectedPage.title}`}
+                      blocks={editorBlocks}
+                      className='page-outliner'
+                      focusedBlockId={focusedBlockId}
+                      onChange={updateEditor}
+                      onExitFocus={() => setFocusedBlockId(undefined)}
+                    />
+                  )
                 ) : (
-                  <MarkdownBody markdown={selectedPage.content} onLink={openLink} />
+                  <MarkdownBody
+                    focusedBlockId={focusedBlockId}
+                    markdown={selectedPage.content}
+                    onLink={openLink}
+                    pagePath={selectedPage.path}
+                    pageTitle={selectedPage.title}
+                    root={root}
+                  />
                 )}
               </article>
               <p className='privacy-line'>
@@ -751,7 +825,7 @@ export function App() {
                     {selectedBacklinks.map((backlink) => (
                       <button
                         key={`${backlink.pagePath}-${backlink.blockId}`}
-                        onClick={() => selectPage(backlink.pageTitle)}
+                        onClick={() => openBlock(backlink)}
                         title={backlink.content}
                         type='button'
                       >
@@ -823,6 +897,7 @@ export function App() {
           <Icon name='plus' size={17} />
           <input
             aria-label='Quick capture to today’s journal'
+            enterkeyhint='send'
             onInput={(event) => setCaptureText(event.currentTarget.value)}
             placeholder='Capture to today…'
             value={captureText}

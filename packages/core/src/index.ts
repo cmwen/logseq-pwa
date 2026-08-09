@@ -21,5 +21,8 @@ export class CoreService {
 }
 
 export * from './blocks.js';
+export * from './compatibility.js';
 export * from './logseq.js';
+export * from './migration.js';
 export * from './utils.js';
+export * from './workspace.js';

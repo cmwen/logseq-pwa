@@ -371,6 +371,16 @@ export function serializeBlockMarkdown(
   return options.finalNewline === false ? markdown : `${markdown}\n`;
 }
 
+/** Serializes free-form capture text as one top-level block with safely nested continuation lines. */
+export function serializeCaptureBlockMarkdown(content: string): string {
+  const normalized = content.replaceAll('\r\n', '\n').replaceAll('\r', '\n').trim();
+  if (!normalized) {
+    throw new BlockModelError('Capture content cannot be empty.');
+  }
+  const [first = '', ...continuations] = normalized.split('\n');
+  return `${[`- ${first}`, ...continuations.map((line) => `  ${line}`)].join('\n')}\n`;
+}
+
 function getBlock(blocks: readonly Block[], blockId: string): Block {
   const block = blocks.find((candidate) => candidate.id === blockId);
   if (!block) {

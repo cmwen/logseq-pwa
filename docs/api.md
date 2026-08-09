@@ -51,4 +51,14 @@ The starter reader intentionally supports a small subset of Logseq markdown:
 - simple `#tags`;
 - bold text using `**text**`.
 
-The editor preserves the complete original page text, including syntax that the reader does not render specially.
+The structured editor is enabled only when the page can round-trip through the block serializer. Other Markdown opens in an exact-source fallback editor so unsupported syntax is never silently rewritten.
+
+## CLI and local REST API
+
+The `loam` CLI supports `info`, `list`, `read`, `search`, `backlinks`, `capture`, `create`, and read-only `validate` commands. `loam web [graphPath]` serves the built client and graph REST endpoints on loopback only.
+
+REST endpoints include `/api/health`, `/api/config`, `/api/graph/info`, `/api/pages`, `/api/page`, `/api/search`, `/api/backlinks`, `/api/capture`, and page creation through `POST /api/pages`.
+
+## MCP tools
+
+The MCP server reads `LOAM_GRAPH_ROOT` unless a graph root is supplied by the embedding process. It exposes page listing/reading, contextual block search and backlinks, journal capture, page creation, conflict-protected page replacement, and graph validation. `write_page` requires the caller's exact `expectedContent` revision.

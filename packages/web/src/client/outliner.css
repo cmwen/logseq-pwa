@@ -15,6 +15,22 @@
 
 .outliner-branch { min-width: 0; }
 
+.outliner-focus-breadcrumb {
+  align-items: center;
+  background: rgba(214, 95, 66, .07);
+  border: 1px solid rgba(214, 95, 66, .16);
+  border-radius: 7px;
+  color: var(--outliner-muted);
+  display: flex;
+  font-size: 11px;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 7px 9px;
+}
+
+.outliner-focus-label { color: inherit; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.outliner-focus-breadcrumb button { background: transparent; border: 0; color: var(--outliner-accent); cursor: pointer; font-size: 11px; padding: 3px; }
+
 .outliner-row {
   align-items: flex-start;
   border-radius: 7px;
@@ -28,6 +44,9 @@
 
 .outliner-row:hover,
 .outliner-row-active { background: rgba(120, 122, 110, .055); }
+.outliner-row-dragging { opacity: .45; }
+.outliner-row[draggable='true'] { cursor: grab; }
+.outliner-row[draggable='true']:active { cursor: grabbing; }
 
 .outliner-bullet,
 .outliner-handle,

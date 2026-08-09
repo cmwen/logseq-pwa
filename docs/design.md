@@ -16,7 +16,7 @@ Browser
                                     └─ static Vite build ──> GitHub Pages
 ```
 
-The app is client-only when deployed. No graph content is sent to a Loam server. The existing Express, CLI, and MCP packages remain as extension points from the base monorepo, but are not required by the Pages build.
+The GitHub Pages app is client-only when deployed. No graph content is sent to a Loam server. For local automation, the CLI and MCP packages expose the same pure workspace index through guarded Node filesystem adapters; neither is required by the static Pages build.
 
 ### Core package
 
@@ -44,6 +44,12 @@ The core package has no browser or filesystem dependency, so the indexing behavi
 5. Refreshing repeats the read/index pass so edits made in Logseq or another editor appear.
 
 The demo graph is in-memory and read-only. It exists so the UI and link interactions can be evaluated before a folder is granted.
+
+### Automation surfaces
+
+`packages/cli` provides graph inspection, exact block search/backlinks, capture, page creation, migration validation, and a loopback-only REST/static server. `packages/mcp` exposes equivalent graph operations as MCP tools and requires an explicit graph root. Both use deterministic IDs and migration analysis from `packages/core`.
+
+Rich Markdown that cannot round-trip through the structured block serializer is edited in an exact-source raw fallback. This safety gate prevents headings, ordered lists, fences, tables, and other unsupported document constructs from being silently converted into bullets.
 
 ## Scope boundaries
 

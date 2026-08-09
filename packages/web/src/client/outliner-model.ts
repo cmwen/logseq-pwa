@@ -1,8 +1,10 @@
 import {
+  analyzeMarkdownCompatibility,
   type Block,
   type BlockEditResult,
   type BlockNode,
   blocksToTree,
+  buildWorkspaceIndex,
   createBlock as createCoreBlock,
   createSiblingBlock,
   deleteEmptyBlock,
@@ -12,7 +14,6 @@ import {
   moveBlock as moveCoreBlock,
   normalizeBlockOrder,
   outdentBlock as outdentCoreBlock,
-  parseBlockMarkdown,
   serializeBlockMarkdown,
   splitBlock as splitCoreBlock,
   toggleBlockCollapsed as toggleCoreBlockCollapsed,
@@ -28,20 +29,67 @@ export interface BlockMutation {
   changed: boolean;
 }
 
+export interface OutlinerSafety {
+  safe: boolean;
+  reasons: string[];
+}
+
+/**
+ * Determines whether the structured outliner can write a page without changing
+ * its Markdown shape. The raw editor is intentionally conservative: a page is
+ * only considered safe when it is made of portable bullet blocks and the
+ * canonical serializer produces the exact source (including its final newline).
+ */
+export function assessOutlinerSafety(markdown: string): OutlinerSafety {
+  const report = analyzeMarkdownCompatibility(markdown);
+  const labels: Record<(typeof report.issues)[number]['kind'], string> = {
+    heading: 'headings',
+    'ordered-list': 'ordered lists',
+    'fenced-code': 'fenced code',
+    table: 'tables',
+    blockquote: 'block quotes',
+    'raw-markdown': 'unsupported interleaving',
+  };
+  return {
+    safe: report.safe,
+    reasons: [...new Set(report.issues.map((issue) => labels[issue.kind]))],
+  };
+}
+
+/** Creates a deterministic, page-scoped identity for a parsed block. */
+export function stableBlockId(pagePath: string, content: string, occurrence: number): string {
+  const source = `${pagePath}\u0000${content}\u0000${occurrence}`;
+  let hash = 2166136261;
+  for (let index = 0; index < source.length; index += 1) {
+    hash ^= source.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `web_${(hash >>> 0).toString(36)}`;
+}
+
 /** Creates one empty root node for a blank editor. */
 export function createBlock(content = ''): OutlinerBlock {
   return blocksToTree(createCoreBlock([], { content }).blocks)[0];
 }
 
 /** Adapts the canonical flat core model to the recursive Preact render model. */
-export function parseMarkdownBlocks(markdown: string): OutlinerBlock[] {
-  const blocks = parseBlockMarkdown(markdown);
+export function parseMarkdownBlocks(
+  markdown: string,
+  pagePath = 'page',
+  pageTitle = pagePath
+): OutlinerBlock[] {
+  const blocks = buildWorkspaceIndex([
+    { title: pageTitle, path: pagePath, content: markdown },
+  ]).blocks;
   return blocks.length ? blocksToTree(blocks) : [createBlock()];
 }
 
 /** Serializes the render tree through the canonical core Markdown serializer. */
-export function serializeMarkdownBlocks(blocks: readonly OutlinerBlock[]): string {
-  return serializeBlockMarkdown(flattenBlockTree(blocks), { finalNewline: false });
+export function serializeMarkdownBlocks(
+  blocks: readonly OutlinerBlock[],
+  finalNewline = false
+): string {
+  return serializeBlockMarkdown(flattenBlockTree(blocks), { finalNewline });
 }
 
 export function updateBlockContent(
@@ -137,6 +185,18 @@ export function findBlock(blocks: readonly OutlinerBlock[], id: string): Outline
   return undefined;
 }
 
+/** Returns one block as a focused tree while keeping every descendant. */
+export function focusBlockTree(blocks: readonly OutlinerBlock[], id: string): OutlinerBlock[] {
+  const block = findBlock(blocks, id);
+  if (!block) return [];
+  const expand = (node: OutlinerBlock): OutlinerBlock => ({
+    ...node,
+    collapsed: false,
+    children: node.children.map(expand),
+  });
+  return [expand(block)];
+}
+
 export function canIndent(blocks: readonly OutlinerBlock[], id: string): boolean {
   const flat = toFlat(blocks);
   const block = getFlatBlock(flat, id);
@@ -153,6 +213,36 @@ export function canMove(blocks: readonly OutlinerBlock[], id: string, direction:
   const siblings = siblingBlocks(flat, block.parentId);
   const index = siblings.findIndex((candidate) => candidate.id === id);
   return direction === -1 ? index > 0 : index < siblings.length - 1;
+}
+
+/** Moves a complete subtree before, after, or inside another block. */
+export function dropBlock(
+  blocks: readonly OutlinerBlock[],
+  draggedId: string,
+  targetId: string,
+  placement: 'before' | 'after' | 'inside'
+): BlockMutation {
+  if (draggedId === targetId) return unchanged(blocks, draggedId);
+  const flat = toFlat(blocks);
+  getFlatBlock(flat, draggedId);
+  const target = getFlatBlock(flat, targetId);
+  const subtreeIds = collectSubtreeIds(flat, draggedId);
+  if (subtreeIds.has(targetId)) return unchanged(blocks, draggedId);
+
+  const remaining = flat.filter((block) => !subtreeIds.has(block.id));
+  const siblings = siblingBlocks(remaining, placement === 'inside' ? target.id : target.parentId);
+  const targetIndex =
+    placement === 'inside'
+      ? siblings.length
+      : siblings.findIndex((block) => block.id === target.id) + (placement === 'after' ? 1 : 0);
+  if (targetIndex < 0) return unchanged(blocks, draggedId);
+
+  const moving = flat.filter((block) => subtreeIds.has(block.id));
+  const next = moveCoreBlock(remaining.concat(moving), draggedId, {
+    parentId: placement === 'inside' ? target.id : target.parentId,
+    index: targetIndex,
+  });
+  return fromStructuralResult(flat, next, draggedId, blocks);
 }
 
 function toFlat(blocks: readonly OutlinerBlock[]): Block[] {

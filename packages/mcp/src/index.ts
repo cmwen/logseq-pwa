@@ -1,3 +1,2 @@
-// MCP server entry point
-// Run the server directly: node dist/server.js
-export {};
+export * from './graph.js';
+export * from './server.js';

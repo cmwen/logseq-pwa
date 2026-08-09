@@ -27,6 +27,7 @@
     "format:check": "biome format src test"
   },
   "dependencies": {
+    "@loam/cli": "workspace:*",
     "@loam/core": "workspace:*",
     "express": "^5.2.1",
     "preact": "^10.29.2"
@@ -34,10 +35,8 @@
   "devDependencies": {
     "@types/express": "latest",
     "@types/node": "latest",
-    "@types/supertest": "latest",
     "@preact/preset-vite": "^2.10.5",
     "cpy-cli": "latest",
-    "supertest": "latest",
     "vitest": "latest",
     "vite": "^8.0.3"
   },

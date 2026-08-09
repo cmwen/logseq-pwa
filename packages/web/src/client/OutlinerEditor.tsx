@@ -7,7 +7,9 @@ import {
   canOutdent,
   createBlock,
   deleteBlock,
+  dropBlock,
   findBlock,
+  focusBlockTree,
   indentBlock,
   mergeBlockBackward,
   moveBlock,
@@ -25,6 +27,8 @@ export interface OutlinerEditorProps {
   ariaLabel?: string;
   className?: string;
   readOnly?: boolean;
+  focusedBlockId?: string;
+  onExitFocus?: () => void;
 }
 
 interface FocusRequest {
@@ -35,6 +39,7 @@ interface FocusRequest {
 interface BlockTreeProps {
   blocks: readonly OutlinerBlock[];
   activeId?: string;
+  draggedId?: string;
   menuId?: string;
   readOnly: boolean;
   onActivate: (id: string) => void;
@@ -43,6 +48,8 @@ interface BlockTreeProps {
   onAction: (action: BlockAction, id: string) => void;
   onMenu: (id: string) => void;
   registerInput: (id: string, element: HTMLTextAreaElement | null) => void;
+  onDrop: (draggedId: string, targetId: string, placement: 'before' | 'after' | 'inside') => void;
+  onDragState: (id?: string) => void;
 }
 
 type BlockAction = 'add' | 'collapse' | 'delete' | 'indent' | 'outdent' | 'up' | 'down';
@@ -53,6 +60,8 @@ export function OutlinerEditor({
   ariaLabel = 'Block editor',
   className = '',
   readOnly = false,
+  focusedBlockId,
+  onExitFocus,
 }: OutlinerEditorProps) {
   const initialBlocks = controlledBlocks.length ? controlledBlocks : [createBlock()];
   const [blocks, setBlocks] = useState<OutlinerBlock[]>(() => [...initialBlocks]);
@@ -64,6 +73,7 @@ export function OutlinerEditor({
   const future = useRef<OutlinerBlock[][]>([]);
   const emitted = useRef<readonly OutlinerBlock[]>(controlledBlocks);
   const currentBlocks = useRef(blocks);
+  const [draggedId, setDraggedId] = useState<string>();
 
   useEffect(() => {
     currentBlocks.current = blocks;
@@ -78,6 +88,12 @@ export function OutlinerEditor({
     future.current = [];
     setActiveId(next[0]?.id);
   }, [controlledBlocks]);
+
+  useEffect(() => {
+    if (!focusedBlockId || !findBlock(blocks, focusedBlockId)) return;
+    setActiveId(focusedBlockId);
+    setFocusRequest({ id: focusedBlockId });
+  }, [focusedBlockId, blocks]);
 
   useEffect(() => {
     if (!focusRequest) return;
@@ -214,6 +230,16 @@ export function OutlinerEditor({
     setMenuId(undefined);
   };
 
+  const handleDrop = (
+    dragged: string,
+    target: string,
+    placement: 'before' | 'after' | 'inside'
+  ) => {
+    if (readOnly) return;
+    applyMutation(dropBlock(currentBlocks.current, dragged, target, placement));
+    setDraggedId(undefined);
+  };
+
   const registerInput = (id: string, element: HTMLTextAreaElement | null) => {
     if (element) {
       inputs.current.set(id, element);
@@ -227,6 +253,7 @@ export function OutlinerEditor({
     () => (activeId ? findBlock(blocks, activeId) : undefined),
     [activeId, blocks]
   );
+  const visibleBlocks = focusedBlockId ? focusBlockTree(blocks, focusedBlockId) : blocks;
 
   return (
     <section
@@ -234,9 +261,21 @@ export function OutlinerEditor({
       className={`outliner ${readOnly ? 'outliner-readonly' : ''} ${className}`.trim()}
     >
       <div className='outliner-tree'>
+        {focusedBlockId && (
+          <div className='outliner-focus-breadcrumb'>
+            <span aria-hidden='true'>Focus</span>
+            <span className='outliner-focus-label'>{active?.content || 'Selected block'}</span>
+            {onExitFocus && (
+              <button onClick={onExitFocus} type='button'>
+                Exit focus
+              </button>
+            )}
+          </div>
+        )}
         <BlockTree
           activeId={activeId}
-          blocks={blocks}
+          blocks={visibleBlocks}
+          draggedId={draggedId}
           menuId={menuId}
           onAction={handleAction}
           onActivate={(id) => setActiveId(id)}
@@ -245,6 +284,8 @@ export function OutlinerEditor({
           onMenu={(id) => setMenuId((current) => (current === id ? undefined : id))}
           readOnly={readOnly}
           registerInput={registerInput}
+          onDrop={handleDrop}
+          onDragState={setDraggedId}
         />
       </div>
 
@@ -295,6 +336,7 @@ export function OutlinerEditor({
 function BlockTree({
   blocks,
   activeId,
+  draggedId,
   menuId,
   readOnly,
   onActivate,
@@ -303,6 +345,8 @@ function BlockTree({
   onAction,
   onMenu,
   registerInput,
+  onDrop,
+  onDragState,
 }: BlockTreeProps) {
   return (
     <>
@@ -312,7 +356,34 @@ function BlockTree({
         const active = activeId === block.id;
         return (
           <div className='outliner-branch' key={block.id}>
-            <div className={`outliner-row ${active ? 'outliner-row-active' : ''}`}>
+            {/* biome-ignore lint/a11y/noStaticElementInteractions: The row is a draggable handle while its controls remain keyboard-accessible. */}
+            <div
+              className={`outliner-row ${active ? 'outliner-row-active' : ''} ${draggedId === block.id ? 'outliner-row-dragging' : ''}`.trim()}
+              draggable={!readOnly}
+              onDragOver={(event) => {
+                if (!readOnly && draggedId && draggedId !== block.id) event.preventDefault();
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                if (draggedId) {
+                  const placement = event.altKey
+                    ? 'inside'
+                    : event.clientY <
+                        event.currentTarget.getBoundingClientRect().top +
+                          event.currentTarget.getBoundingClientRect().height / 2
+                      ? 'before'
+                      : 'after';
+                  onDrop(draggedId, block.id, placement);
+                }
+              }}
+              onDragEnd={() => onDragState(undefined)}
+              onDragStart={(event) => {
+                if (readOnly) return;
+                onDragState(block.id);
+                event.dataTransfer?.setData('text/plain', block.id);
+                if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+              }}
+            >
               <button
                 aria-label={
                   hasChildren
@@ -396,6 +467,7 @@ function BlockTree({
                 <BlockTree
                   activeId={activeId}
                   blocks={block.children}
+                  draggedId={draggedId}
                   menuId={menuId}
                   onAction={onAction}
                   onActivate={onActivate}
@@ -404,6 +476,8 @@ function BlockTree({
                   onMenu={onMenu}
                   readOnly={readOnly}
                   registerInput={registerInput}
+                  onDrop={onDrop}
+                  onDragState={onDragState}
                 />
               </div>
             )}

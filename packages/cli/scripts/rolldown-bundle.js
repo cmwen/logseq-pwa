@@ -5,28 +5,31 @@ import { rolldown } from 'rolldown';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const packageRoot = join(__dirname, '..');
+const repositoryRoot = join(packageRoot, '../..');
 
 async function bundle() {
   console.log('📦 Bundling CLI with Rolldown...\n');
 
   try {
+    process.chdir(repositoryRoot);
     const build = await rolldown({
-      input: join(packageRoot, 'dist/index.js'),
+      input: 'packages/cli/dist/index.js',
+      treeshake: false,
       external: [
         'commander',
         'express',
+        '@loam/core',
+        /^node:/,
         'preact',
         'zod',
         '@modelcontextprotocol/sdk/server/index.js',
         '@modelcontextprotocol/sdk/server/stdio.js',
         '@modelcontextprotocol/sdk/types.js',
       ],
-      platform: 'node',
     });
 
     const { output } = await build.generate({
       format: 'esm',
-      banner: '#!/usr/bin/env node\n',
     });
 
     const bundledCode = output[0].code;

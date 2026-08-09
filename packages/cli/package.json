@@ -1,21 +1,23 @@
 {
   "name": "@loam/cli",
   "version": "0.1.0",
-  "description": "Command-line interface",
+  "description": "CLI for local-first Logseq graph operations and the Loam web client",
   "keywords": [
     "cli",
     "command-line"
   ],
   "type": "module",
   "main": "dist/bundled.js",
+  "types": "dist/index.d.ts",
   "bin": "dist/bundled.js",
   "files": [
-    "dist/bundled.js"
+    "dist/bundled.js",
+    "dist/**/*.d.ts"
   ],
   "scripts": {
-    "build": "tsc -b",
+    "build": "tsc -b && pnpm build:bundle",
     "build:bundle": "node scripts/rolldown-bundle.js",
-    "prepare": "tsc -b",
+    "prepare": "tsc -b && pnpm build:bundle",
     "test": "vitest run",
     "lint": "biome check --write src test",
     "lint:ci": "biome check src test",
@@ -25,6 +27,7 @@
   "dependencies": {
     "commander": "^15.0.0",
     "@loam/core": "workspace:*",
+    "@loam/mcp": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "express": "^5.2.1",
     "preact": "^10.29.2",
