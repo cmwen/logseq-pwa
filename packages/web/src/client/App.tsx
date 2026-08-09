@@ -13,6 +13,7 @@ import {
   savePage,
   supportsFolderAccess,
 } from './logseq.js';
+import { MarkdownBody } from './MarkdownBody.js';
 import { OutlinerEditor } from './OutlinerEditor.js';
 import {
   type OutlinerBlock,
@@ -222,105 +223,6 @@ function searchPageBlocks(index: BlockSearchResult[], search: string): BlockSear
   const query = search.trim().toLocaleLowerCase();
   if (!query) return [];
   return index.filter((result) => result.searchable.includes(query)).slice(0, 40);
-}
-
-function InlineContent({ text, onLink }: { text: string; onLink: (target: string) => void }) {
-  const tokens = text.split(/(\[\[[^\]]+\]\]|#[\w/-]+|\*\*[^*]+\*\*)/g);
-  const tokenCounts = new Map<string, number>();
-  return (
-    <>
-      {tokens.map((token) => {
-        const occurrence = tokenCounts.get(token) ?? 0;
-        tokenCounts.set(token, occurrence + 1);
-        const tokenKey = `${token}-${occurrence}`;
-        if (token.startsWith('[[') && token.endsWith(']]')) {
-          const reference = token.slice(2, -2);
-          const [target, label] = reference.split('|');
-          return (
-            <button
-              className='inline-link'
-              key={tokenKey}
-              onClick={() => onLink(target.trim())}
-              type='button'
-            >
-              <Icon name='link' size={13} />
-              {label?.trim() || target.trim()}
-            </button>
-          );
-        }
-        if (token.startsWith('#')) {
-          return (
-            <span className='tag' key={tokenKey}>
-              {token}
-            </span>
-          );
-        }
-        if (token.startsWith('**') && token.endsWith('**')) {
-          return <strong key={tokenKey}>{token.slice(2, -2)}</strong>;
-        }
-        return <span key={tokenKey}>{token}</span>;
-      })}
-    </>
-  );
-}
-
-function PageBody({ page, onLink }: { page: LocalPage; onLink: (target: string) => void }) {
-  const lines = page.content.split('\n');
-  const lineCounts = new Map<string, number>();
-  return (
-    <div className='page-body'>
-      {lines.map((line) => {
-        const occurrence = lineCounts.get(line) ?? 0;
-        lineCounts.set(line, occurrence + 1);
-        const lineKey = `${line}-${occurrence}`;
-        const leadingWhitespace = line.match(/^\s*/)?.[0].length ?? 0;
-        const trimmed = line.trim();
-        if (!trimmed) {
-          return <div className='blank-line' key={`blank-${lineKey}`} />;
-        }
-
-        const heading = trimmed.match(/^(#{1,3})\s+(.+)$/);
-        if (heading) {
-          const Heading = `h${heading[1].length}` as 'h1' | 'h2' | 'h3';
-          return (
-            <Heading key={`heading-${lineKey}`}>
-              <InlineContent onLink={onLink} text={heading[2]} />
-            </Heading>
-          );
-        }
-
-        const bullet = trimmed.match(/^[-*]\s+(?:(TODO|DONE|LATER)\s+)?(.*)$/);
-        if (bullet) {
-          const state = bullet[1]?.toLocaleLowerCase();
-          return (
-            <div
-              className='page-block'
-              key={`block-${lineKey}`}
-              style={{ paddingLeft: `${leadingWhitespace * 8}px` }}
-            >
-              <span className={`bullet ${state === 'done' ? 'bullet-done' : ''}`}>
-                {state === 'done' ? <Icon name='check' size={13} /> : ''}
-              </span>
-              {state && <span className={`task-state task-${state}`}>{state}</span>}
-              <span>
-                <InlineContent onLink={onLink} text={bullet[2]} />
-              </span>
-            </div>
-          );
-        }
-
-        return (
-          <p
-            className='page-paragraph'
-            key={`paragraph-${lineKey}`}
-            style={{ paddingLeft: `${leadingWhitespace * 8}px` }}
-          >
-            <InlineContent onLink={onLink} text={trimmed} />
-          </p>
-        );
-      })}
-    </div>
-  );
 }
 
 function EmptyState({ onOpen, supported }: { onOpen: () => void; supported: boolean }) {
@@ -813,7 +715,7 @@ export function App() {
                     onChange={updateEditor}
                   />
                 ) : (
-                  <PageBody onLink={openLink} page={selectedPage} />
+                  <MarkdownBody markdown={selectedPage.content} onLink={openLink} />
                 )}
               </article>
               <p className='privacy-line'>
