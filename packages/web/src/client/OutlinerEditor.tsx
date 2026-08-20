@@ -1,4 +1,6 @@
+import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { applyEditorCommand, type EditorCommand } from './editor-commands.js';
 import {
   addSiblingBlock,
   type BlockMutation,
@@ -134,6 +136,13 @@ export function OutlinerEditor({
       mutation.blocks,
       mutation.focusId ? { id: mutation.focusId, caret: mutation.caret } : undefined
     );
+    if (focusedBlockId && !findBlock(mutation.blocks, focusedBlockId)) onExitFocus?.();
+  };
+
+  const focusInSnapshot = (snapshot: readonly OutlinerBlock[]): FocusRequest | undefined => {
+    if (activeId && findBlock(snapshot, activeId)) return { id: activeId };
+    const first = snapshot[0];
+    return first ? { id: first.id, caret: first.content.length } : undefined;
   };
 
   const undo = () => {
@@ -141,7 +150,7 @@ export function OutlinerEditor({
     if (!previous) return;
     past.current = past.current.slice(0, -1);
     future.current = [currentBlocks.current, ...future.current].slice(0, 100);
-    commit(previous, activeId ? { id: activeId } : undefined, false);
+    commit(previous, focusInSnapshot(previous), false);
   };
 
   const redo = () => {
@@ -149,7 +158,7 @@ export function OutlinerEditor({
     if (!next) return;
     future.current = future.current.slice(1);
     past.current = [...past.current.slice(-99), currentBlocks.current];
-    commit(next, activeId ? { id: activeId } : undefined, false);
+    commit(next, focusInSnapshot(next), false);
   };
 
   const handleInput = (id: string, content: string) => {
@@ -157,11 +166,71 @@ export function OutlinerEditor({
     commit(next);
   };
 
+  const applyTextCommand = (command: EditorCommand, id = activeId) => {
+    if (readOnly || !id) return;
+    const block = findBlock(currentBlocks.current, id);
+    const input = inputs.current.get(id);
+    if (!block || !input) return;
+    const edit = applyEditorCommand(command, input.value, {
+      start: input.selectionStart ?? input.value.length,
+      end: input.selectionEnd ?? input.value.length,
+    });
+    if (edit.content === input.value) return;
+    commit(updateBlockContent(currentBlocks.current, id, edit.content), {
+      id,
+      caret: edit.selectionStart,
+    });
+    // A selection (rather than only a caret) is useful after applying a
+    // formatting command. The normal focus effect uses a caret for structural
+    // edits, so restore the full range on the next frame here.
+    const restoreSelection = () => {
+      const nextInput = inputs.current.get(id);
+      if (!nextInput) return;
+      nextInput.focus();
+      nextInput.setSelectionRange(edit.selectionStart, edit.selectionEnd);
+    };
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(restoreSelection);
+    else restoreSelection();
+  };
+
   // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Keyboard commands are kept together so their precedence is explicit.
   const handleKeyDown = (event: KeyboardEvent, block: OutlinerBlock) => {
     if (readOnly) return;
     const input = event.currentTarget as HTMLTextAreaElement;
     const command = event.metaKey || event.ctrlKey;
+
+    // Let the IME finish composing its candidate before treating Enter as a
+    // block command. Some mobile keyboards report this as keyCode 229.
+    if (event.key === 'Enter' && (event.isComposing || event.keyCode === 229)) return;
+
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      input.blur();
+      setActiveId(undefined);
+      setMenuId(undefined);
+      return;
+    }
+
+    if (command && event.key.toLocaleLowerCase() === 'b') {
+      event.preventDefault();
+      applyTextCommand('bold', block.id);
+      return;
+    }
+    if (command && event.key.toLocaleLowerCase() === 'i') {
+      event.preventDefault();
+      applyTextCommand('italic', block.id);
+      return;
+    }
+    if (command && event.shiftKey && event.key.toLocaleLowerCase() === 'k') {
+      event.preventDefault();
+      applyTextCommand('page-link', block.id);
+      return;
+    }
+    if (command && event.key === 'Enter') {
+      event.preventDefault();
+      applyTextCommand('cycle-task', block.id);
+      return;
+    }
 
     if (command && event.key.toLocaleLowerCase() === 'z') {
       event.preventDefault();
@@ -173,9 +242,44 @@ export function OutlinerEditor({
       redo();
       return;
     }
-    if (event.altKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+    if (
+      (event.altKey || (event.metaKey && event.shiftKey)) &&
+      (event.key === 'ArrowUp' || event.key === 'ArrowDown')
+    ) {
       event.preventDefault();
       applyMutation(moveBlock(currentBlocks.current, block.id, event.key === 'ArrowUp' ? -1 : 1));
+      return;
+    }
+    if (
+      !command &&
+      !event.shiftKey &&
+      !event.altKey &&
+      event.key === 'ArrowUp' &&
+      input.selectionStart === 0 &&
+      input.selectionEnd === 0
+    ) {
+      const previous = adjacentVisibleBlock(block.id, visibleBlocks, -1);
+      if (previous) {
+        event.preventDefault();
+        setActiveId(previous.id);
+        setFocusRequest({ id: previous.id, caret: previous.content.length });
+      }
+      return;
+    }
+    if (
+      !command &&
+      !event.shiftKey &&
+      !event.altKey &&
+      event.key === 'ArrowDown' &&
+      input.selectionStart === input.value.length &&
+      input.selectionEnd === input.value.length
+    ) {
+      const next = adjacentVisibleBlock(block.id, visibleBlocks, 1);
+      if (next) {
+        event.preventDefault();
+        setActiveId(next.id);
+        setFocusRequest({ id: next.id, caret: 0 });
+      }
       return;
     }
     if (event.key === 'Tab') {
@@ -191,6 +295,15 @@ export function OutlinerEditor({
       event.preventDefault();
       const start = input.selectionStart ?? block.content.length;
       const end = input.selectionEnd ?? start;
+      if (
+        start === 0 &&
+        end === block.content.length &&
+        !block.content &&
+        block.parentId !== null
+      ) {
+        applyMutation(outdentBlock(currentBlocks.current, block.id));
+        return;
+      }
       applyMutation(
         splitBlock(
           currentBlocks.current,
@@ -290,43 +403,89 @@ export function OutlinerEditor({
       </div>
 
       {!readOnly && active && (
-        <div aria-label='Block commands' className='outliner-mobile-toolbar' role='toolbar'>
-          <ActionButton
-            disabled={!canOutdent(blocks, active.id)}
-            label='Outdent block'
-            onClick={() => handleAction('outdent', active.id)}
-            text='←'
-          />
-          <ActionButton
-            disabled={!canIndent(blocks, active.id)}
-            label='Indent block'
-            onClick={() => handleAction('indent', active.id)}
-            text='→'
-          />
-          <ActionButton
-            label='Add block'
-            onClick={() => handleAction('add', active.id)}
-            text='＋'
-          />
-          <ActionButton
-            disabled={!canMove(blocks, active.id, -1)}
-            label='Move block up'
-            onClick={() => handleAction('up', active.id)}
-            text='↑'
-          />
-          <ActionButton
-            disabled={!canMove(blocks, active.id, 1)}
-            label='Move block down'
-            onClick={() => handleAction('down', active.id)}
-            text='↓'
-          />
-          {active.children.length > 0 && (
+        <div
+          aria-label='Editing commands'
+          className='outliner-mobile-toolbar'
+          onPointerDown={(event) => {
+            if ((event.target as HTMLElement).closest('button')) {
+              // Keep the textarea selection and the software keyboard alive
+              // while a touch command is being pressed.
+              event.preventDefault();
+              inputs.current.get(active.id)?.focus();
+            }
+          }}
+          role='toolbar'
+        >
+          <ToolbarGroup label='Insert'>
             <ActionButton
-              label={active.collapsed ? 'Expand block' : 'Collapse block'}
-              onClick={() => handleAction('collapse', active.id)}
-              text={active.collapsed ? '▸' : '▾'}
+              label='Insert page link'
+              onClick={() => applyTextCommand('page-link')}
+              text='[[ ]]'
             />
-          )}
+            <ActionButton
+              label='Insert block reference'
+              onClick={() => applyTextCommand('block-reference')}
+              text='(( ))'
+            />
+            <ActionButton label='Insert tag' onClick={() => applyTextCommand('tag')} text='#' />
+            <ActionButton
+              label='Cycle task status'
+              onClick={() => applyTextCommand('cycle-task')}
+              text='TODO'
+            />
+          </ToolbarGroup>
+          <ToolbarGroup label='Format'>
+            <ActionButton label='Bold' onClick={() => applyTextCommand('bold')} text='B' />
+            <ActionButton label='Italic' onClick={() => applyTextCommand('italic')} text='I' />
+            <ActionButton
+              label='Inline code'
+              onClick={() => applyTextCommand('inline-code')}
+              text='`x`'
+            />
+            <ActionButton
+              label='Insert property'
+              onClick={() => applyTextCommand('property')}
+              text='::'
+            />
+          </ToolbarGroup>
+          <ToolbarGroup label='Structure'>
+            <ActionButton
+              disabled={!canOutdent(blocks, active.id)}
+              label='Outdent block'
+              onClick={() => handleAction('outdent', active.id)}
+              text='←'
+            />
+            <ActionButton
+              disabled={!canIndent(blocks, active.id)}
+              label='Indent block'
+              onClick={() => handleAction('indent', active.id)}
+              text='→'
+            />
+            <ActionButton
+              label='Add block'
+              onClick={() => handleAction('add', active.id)}
+              text='＋'
+            />
+            <ActionButton
+              disabled={!canMove(blocks, active.id, -1)}
+              label='Move block up'
+              onClick={() => handleAction('up', active.id)}
+              text='↑'
+            />
+            <ActionButton
+              disabled={!canMove(blocks, active.id, 1)}
+              label='Move block down'
+              onClick={() => handleAction('down', active.id)}
+              text='↓'
+            />
+            {active.children.length > 0 && (
+              <ActionButton
+                label={active.collapsed ? 'Expand block' : 'Collapse block'}
+                onClick={() => handleAction('collapse', active.id)}
+                text={active.collapsed ? '▸' : '▾'}
+              />
+            )}
+          </ToolbarGroup>
         </div>
       )}
     </section>
@@ -504,6 +663,31 @@ function ActionButton({
       <span aria-hidden='true'>{text}</span>
     </button>
   );
+}
+
+function ToolbarGroup({ children, label }: { children: ComponentChildren; label: string }) {
+  return (
+    <fieldset aria-label={label} className='outliner-toolbar-group'>
+      {children}
+    </fieldset>
+  );
+}
+
+function adjacentVisibleBlock(
+  id: string,
+  blocks: readonly OutlinerBlock[],
+  direction: -1 | 1
+): OutlinerBlock | undefined {
+  const visible: OutlinerBlock[] = [];
+  const visit = (nodes: readonly OutlinerBlock[]) => {
+    for (const node of nodes) {
+      visible.push(node);
+      if (!node.collapsed) visit(node.children);
+    }
+  };
+  visit(blocks);
+  const index = visible.findIndex((node) => node.id === id);
+  return index >= 0 ? visible[index + direction] : undefined;
 }
 
 function resizeInput(input: HTMLTextAreaElement) {
