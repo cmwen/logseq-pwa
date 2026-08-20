@@ -30,7 +30,7 @@
     "@loam/cli": "workspace:*",
     "@loam/core": "workspace:*",
     "express": "^5.2.1",
-    "preact": "^10.29.2"
+    "preact": "^10.29.8"
   },
   "devDependencies": {
     "@types/express": "latest",
