@@ -35,10 +35,10 @@
   "devDependencies": {
     "@types/express": "latest",
     "@types/node": "latest",
-    "@preact/preset-vite": "^2.10.5",
+    "@preact/preset-vite": "^2.10.6",
     "cpy-cli": "latest",
     "vitest": "latest",
-    "vite": "^8.0.3"
+    "vite": "^8.2.1"
   },
   "publishConfig": {
     "access": "public"
