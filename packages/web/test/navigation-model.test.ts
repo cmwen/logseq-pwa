@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   blockDomId,
   createBlockNavigationTarget,
+  filterCommandPaletteItems,
   rememberSearchQuery,
 } from '../src/client/navigation-model.js';
 
@@ -21,5 +22,15 @@ describe('block navigation model', () => {
   it('retains recent search history without duplicate entries', () => {
     expect(rememberSearchQuery(['old', 'needle'], ' needle ')).toEqual(['needle', 'old']);
     expect(rememberSearchQuery(['old'], '')).toEqual(['old']);
+  });
+
+  it('filters commands by their label and description', () => {
+    const commands = [
+      { description: 'Create it in pages/', label: 'New page' },
+      { description: 'Find pages and blocks', label: 'Search' },
+    ];
+
+    expect(filterCommandPaletteItems(commands, '  create it  ')).toEqual([commands[0]]);
+    expect(filterCommandPaletteItems(commands, '')).toEqual(commands);
   });
 });

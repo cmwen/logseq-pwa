@@ -14,7 +14,11 @@ import {
   supportsFolderAccess,
 } from './logseq.js';
 import { MarkdownBody } from './MarkdownBody.js';
-import { createBlockNavigationTarget, rememberSearchQuery } from './navigation-model.js';
+import {
+  createBlockNavigationTarget,
+  filterCommandPaletteItems,
+  rememberSearchQuery,
+} from './navigation-model.js';
 import { OutlinerEditor } from './OutlinerEditor.js';
 import {
   assessOutlinerSafety,
@@ -191,6 +195,15 @@ interface BlockSearchResult {
   searchable: string;
 }
 
+interface PaletteCommand {
+  description: string;
+  icon: IconName;
+  id: string;
+  label: string;
+  run: () => void | Promise<void>;
+  shortcut?: string;
+}
+
 function indexPageBlocks(pages: LocalPage[]): BlockSearchResult[] {
   const results: BlockSearchResult[] = [];
   for (const page of pages) {
@@ -268,7 +281,13 @@ export function App() {
   const [notice, setNotice] = useState('');
   const [newPageTitle, setNewPageTitle] = useState('');
   const [captureText, setCaptureText] = useState('');
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+  const [isCreatePageOpen, setIsCreatePageOpen] = useState(false);
+  const [paletteQuery, setPaletteQuery] = useState('');
+  const [paletteSelection, setPaletteSelection] = useState(0);
   const searchInput = useRef<HTMLInputElement>(null);
+  const commandInput = useRef<HTMLInputElement>(null);
+  const createPageInput = useRef<HTMLInputElement>(null);
 
   const selectedPage = pages.find((page) => page.title === selectedTitle) ?? pages[0];
   const filteredPages = useMemo(() => {
@@ -306,16 +325,54 @@ export function App() {
     window.setTimeout(() => setNotice(''), 4200);
   }, []);
 
+  const openCommandPalette = useCallback(() => {
+    setPaletteQuery('');
+    setPaletteSelection(0);
+    setIsCommandPaletteOpen(true);
+  }, []);
+
+  const closeCommandPalette = useCallback(() => {
+    setIsCommandPaletteOpen(false);
+    setPaletteQuery('');
+    setPaletteSelection(0);
+  }, []);
+
+  const launchNewPage = useCallback(
+    (title = '') => {
+      closeCommandPalette();
+      if (!root) {
+        showNotice('Open a local Logseq folder before creating a page.');
+        return;
+      }
+      setNewPageTitle(title);
+      setIsCreatePageOpen(true);
+    },
+    [closeCommandPalette, root, showNotice]
+  );
+
   useEffect(() => {
-    const focusSearch = (event: KeyboardEvent) => {
+    const handleGlobalKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === 'k') {
         event.preventDefault();
-        searchInput.current?.focus();
+        openCommandPalette();
+      } else if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === 'n') {
+        event.preventDefault();
+        launchNewPage();
       }
     };
-    window.addEventListener('keydown', focusSearch);
-    return () => window.removeEventListener('keydown', focusSearch);
-  }, []);
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [launchNewPage, openCommandPalette]);
+
+  useEffect(() => {
+    if (!isCommandPaletteOpen) return;
+    window.requestAnimationFrame(() => commandInput.current?.focus());
+  }, [isCommandPaletteOpen]);
+
+  useEffect(() => {
+    if (!isCreatePageOpen) return;
+    window.requestAnimationFrame(() => createPageInput.current?.focus());
+  }, [isCreatePageOpen]);
 
   useEffect(() => {
     if (!isEditing || isDemo || !selectedPage?.handle || draft === selectedPage.content) return;
@@ -486,17 +543,19 @@ export function App() {
 
   const handleCreatePage = async (event: Event) => {
     event.preventDefault();
-    if (!root || !newPageTitle.trim()) return;
+    const title = newPageTitle.trim();
+    if (!root || !title) return;
     try {
-      await createPageFile(root, newPageTitle);
+      await createPageFile(root, title);
       const loadedPages = await readLogseqFolder(root);
       setPages(loadedPages);
       const created = loadedPages.find(
-        (page) => normalizePageTitle(page.title) === normalizePageTitle(newPageTitle)
+        (page) => normalizePageTitle(page.title) === normalizePageTitle(title)
       );
       if (created) selectPage(created.title);
       setNewPageTitle('');
-      showNotice(`Created “${newPageTitle.trim()}”.`);
+      setIsCreatePageOpen(false);
+      showNotice(`Created “${title}”.`);
     } catch (error) {
       showNotice(error instanceof Error ? error.message : 'Could not create the page.');
     }
@@ -520,6 +579,65 @@ export function App() {
     }
   };
 
+  const commandQuery = paletteQuery.trim().toLocaleLowerCase();
+  const commands: PaletteCommand[] = [
+    ...(paletteQuery.trim()
+      ? [
+          {
+            description: root ? 'Create it in your local graph' : 'Open a local graph first',
+            icon: 'plus' as const,
+            id: 'create-page-named',
+            label: `Create page “${paletteQuery.trim()}”`,
+            run: () => launchNewPage(paletteQuery.trim()),
+          },
+        ]
+      : []),
+    {
+      description: root ? 'Start a blank page in pages/' : 'Open a local graph first',
+      icon: 'plus' as const,
+      id: 'new-page',
+      label: 'New page',
+      run: () => launchNewPage(),
+      shortcut: '⌘ N',
+    },
+    {
+      description: 'Find pages and blocks in this graph',
+      icon: 'search' as const,
+      id: 'search',
+      label: 'Search pages and blocks',
+      run: () => {
+        closeCommandPalette();
+        window.setTimeout(() => searchInput.current?.focus(), 0);
+      },
+    },
+    {
+      description: 'Open today’s journal',
+      icon: 'spark' as const,
+      id: 'today',
+      label: 'Go to Today',
+      run: () => {
+        closeCommandPalette();
+        return openToday();
+      },
+    },
+    {
+      description: root ? 'Read the latest files from disk' : 'Choose a local graph folder',
+      icon: 'refresh' as const,
+      id: 'refresh',
+      label: root ? 'Refresh graph' : 'Open a Logseq folder',
+      run: () => {
+        closeCommandPalette();
+        return root ? refreshFolder() : openFolder();
+      },
+    },
+  ];
+  const filteredCommands = filterCommandPaletteItems(commands, commandQuery);
+
+  const runPaletteCommand = (command: PaletteCommand | undefined) => {
+    if (!command) return;
+    void command.run();
+  };
+
   return (
     <div className='app-shell'>
       <header className='topbar'>
@@ -533,6 +651,17 @@ export function App() {
           </div>
         </div>
         <div className='topbar-actions'>
+          <button
+            aria-label='Open command palette'
+            aria-keyshortcuts='Meta+K Control+K'
+            className='command-trigger'
+            onClick={openCommandPalette}
+            type='button'
+          >
+            <Icon name='search' size={15} />
+            <span>Command palette</span>
+            <kbd>⌘ K</kbd>
+          </button>
           <div className={`connection-status ${isDemo ? 'status-demo' : ''}`}>
             <span className='status-dot' />
             {isDemo ? 'Demo graph' : 'Local graph connected'}
@@ -906,6 +1035,153 @@ export function App() {
             <Icon name='arrow' size={16} />
           </button>
         </form>
+      )}
+      {isCommandPaletteOpen && (
+        <div className='overlay' role='presentation'>
+          <section
+            aria-label='Command palette'
+            aria-modal='true'
+            className='command-palette'
+            onMouseDown={(event) => event.stopPropagation()}
+            role='dialog'
+          >
+            <div className='command-search'>
+              <Icon name='search' size={18} />
+              <input
+                aria-label='Search commands'
+                onInput={(event) => {
+                  setPaletteQuery(event.currentTarget.value);
+                  setPaletteSelection(0);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'ArrowDown') {
+                    event.preventDefault();
+                    setPaletteSelection((current) =>
+                      filteredCommands.length ? (current + 1) % filteredCommands.length : 0
+                    );
+                  } else if (event.key === 'ArrowUp') {
+                    event.preventDefault();
+                    setPaletteSelection((current) =>
+                      filteredCommands.length
+                        ? (current - 1 + filteredCommands.length) % filteredCommands.length
+                        : 0
+                    );
+                  } else if (event.key === 'Enter') {
+                    event.preventDefault();
+                    runPaletteCommand(filteredCommands[paletteSelection] ?? filteredCommands[0]);
+                  } else if (event.key === 'Escape') {
+                    event.preventDefault();
+                    closeCommandPalette();
+                  }
+                }}
+                placeholder='Type a command…'
+                ref={commandInput}
+                value={paletteQuery}
+              />
+              <kbd>ESC</kbd>
+            </div>
+            <div className='command-list' role='listbox' aria-label='Available commands'>
+              {filteredCommands.length ? (
+                filteredCommands.map((command, index) => (
+                  <button
+                    aria-selected={index === paletteSelection}
+                    className={`command-item ${index === paletteSelection ? 'command-item-active' : ''}`}
+                    key={command.id}
+                    onClick={() => runPaletteCommand(command)}
+                    onMouseEnter={() => setPaletteSelection(index)}
+                    role='option'
+                    type='button'
+                  >
+                    <span className='command-item-icon'>
+                      <Icon name={command.icon} size={16} />
+                    </span>
+                    <span className='command-item-copy'>
+                      <strong>{command.label}</strong>
+                      <small>{command.description}</small>
+                    </span>
+                    {command.shortcut && <kbd>{command.shortcut}</kbd>}
+                  </button>
+                ))
+              ) : (
+                <p className='command-empty'>No commands match “{paletteQuery}”.</p>
+              )}
+            </div>
+            <div className='command-footer'>
+              <span>
+                <kbd>↑</kbd>
+                <kbd>↓</kbd> Navigate
+              </span>
+              <span>
+                <kbd>↵</kbd> Select
+              </span>
+              <span>
+                <kbd>ESC</kbd> Close
+              </span>
+            </div>
+          </section>
+        </div>
+      )}
+      {isCreatePageOpen && (
+        <div className='overlay' role='presentation'>
+          <section
+            aria-labelledby='create-page-title'
+            aria-modal='true'
+            className='create-page-dialog'
+            onMouseDown={(event) => event.stopPropagation()}
+            role='dialog'
+          >
+            <div className='dialog-heading'>
+              <div className='command-item-icon'>
+                <Icon name='plus' size={17} />
+              </div>
+              <div>
+                <p className='eyebrow'>NEW PAGE</p>
+                <h2 id='create-page-title'>What should this page be called?</h2>
+              </div>
+              <button
+                aria-label='Close new page dialog'
+                className='dialog-close'
+                onClick={() => setIsCreatePageOpen(false)}
+                type='button'
+              >
+                <Icon name='close' size={17} />
+              </button>
+            </div>
+            <form onSubmit={handleCreatePage}>
+              <label className='sr-only' htmlFor='new-page-title'>
+                Page title
+              </label>
+              <input
+                autoComplete='off'
+                className='create-page-input'
+                id='new-page-title'
+                onInput={(event) => setNewPageTitle(event.currentTarget.value)}
+                placeholder='e.g. Ideas for the next season'
+                ref={createPageInput}
+                value={newPageTitle}
+              />
+              <p className='dialog-hint'>
+                Saved as a Markdown page in your <code>pages/</code> folder.
+              </p>
+              <div className='dialog-actions'>
+                <button
+                  className='button button-quiet'
+                  onClick={() => setIsCreatePageOpen(false)}
+                  type='button'
+                >
+                  Cancel
+                </button>
+                <button
+                  className='button button-primary'
+                  disabled={!newPageTitle.trim()}
+                  type='submit'
+                >
+                  <Icon name='plus' size={16} /> Create page
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
       )}
       {notice && (
         <div className='toast' role='status'>
