@@ -1,14 +1,20 @@
 import {
   buildPageIndex,
+  type FrontmatterData,
   type IndexedPage,
   type PageInput,
   pageFilenameForTitle,
   pageTitleFromPath,
   serializeCaptureBlockMarkdown,
+  serializeFrontmatter,
 } from '@loam/core';
 
 export interface LocalPage extends IndexedPage {
+  frontmatter?: FrontmatterData;
+  frontmatterSource?: string;
   handle?: FileSystemFileHandle;
+  lastModified?: number;
+  size?: number;
 }
 
 interface DirectoryPickerOptions {
@@ -18,6 +24,11 @@ interface DirectoryPickerOptions {
 declare global {
   interface Window {
     showDirectoryPicker?: (options?: DirectoryPickerOptions) => Promise<FileSystemDirectoryHandle>;
+  }
+
+  interface FileSystemHandle {
+    queryPermission?: (options?: DirectoryPickerOptions) => Promise<PermissionState>;
+    requestPermission?: (options?: DirectoryPickerOptions) => Promise<PermissionState>;
   }
 }
 
@@ -111,6 +122,20 @@ export async function pickLogseqFolder(): Promise<FileSystemDirectoryHandle> {
   }
 
   return window.showDirectoryPicker({ mode: 'readwrite' });
+}
+
+/** Queries access without triggering a permission prompt. */
+export async function queryFolderPermission(
+  root: FileSystemDirectoryHandle
+): Promise<PermissionState> {
+  return root.queryPermission?.({ mode: 'readwrite' }) ?? 'granted';
+}
+
+/** Requests read/write access from a user-triggered reconnect action when necessary. */
+export async function requestFolderPermission(root: FileSystemDirectoryHandle): Promise<boolean> {
+  const current = await queryFolderPermission(root);
+  if (current === 'granted') return true;
+  return (await root.requestPermission?.({ mode: 'readwrite' })) === 'granted';
 }
 
 export async function readLogseqFolder(root: FileSystemDirectoryHandle): Promise<LocalPage[]> {
@@ -228,6 +253,14 @@ export async function createPageFile(
   const writable = await file.createWritable();
   // New pages deliberately start as a safe bullet document. A heading would
   // force the page into the raw Markdown editor before the user has written it.
-  await writable.write('- ');
+  const id =
+    globalThis.crypto?.randomUUID?.() ??
+    `loam-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  const frontmatter = serializeFrontmatter({
+    created: new Date().toISOString(),
+    'loam-id': id,
+    'loam-schema': 1,
+  });
+  await writable.write(`${frontmatter}- `);
   await writable.close();
 }

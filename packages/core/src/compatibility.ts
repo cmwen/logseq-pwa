@@ -1,9 +1,22 @@
 import { parseBlockMarkdown, serializeBlockMarkdown } from './blocks.js';
+import {
+  FrontmatterParseError,
+  type MarkdownDocument,
+  parseFrontmatter,
+  splitFrontmatter,
+} from './frontmatter.js';
 
 /** A Markdown construct that the structured block serializer cannot preserve verbatim. */
 export interface MarkdownCompatibilityIssue {
   /** The kind of syntax that would be changed. */
-  kind: 'heading' | 'ordered-list' | 'fenced-code' | 'table' | 'blockquote' | 'raw-markdown';
+  kind:
+    | 'heading'
+    | 'ordered-list'
+    | 'fenced-code'
+    | 'table'
+    | 'blockquote'
+    | 'raw-markdown'
+    | 'frontmatter';
   /** One-based source line containing the construct. */
   line: number;
   /** The original source line. */
@@ -87,13 +100,13 @@ function standardIssue(
   return undefined;
 }
 
-function findIssues(markdown: string): MarkdownCompatibilityIssue[] {
+function findIssues(markdown: string, lineOffset = 0): MarkdownCompatibilityIssue[] {
   const lines = lineEnding(markdown).split('\n');
   const issues: MarkdownCompatibilityIssue[] = [];
   let inFence = false;
 
   lines.forEach((source, index) => {
-    const line = index + 1;
+    const line = index + 1 + lineOffset;
     const fence = /^\s*(```+|~~~+)/u.test(source);
 
     if (fence || inFence) {
@@ -126,16 +139,37 @@ function findIssues(markdown: string): MarkdownCompatibilityIssue[] {
  * parser and serializer output, catching syntax that is not safe even when it is not one of the
  * known construct patterns.
  */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: This safety gate combines parsing, source comparison, and diagnostics.
 export function analyzeMarkdownCompatibility(markdown: string): MarkdownCompatibilityReport {
   const normalized = lineEnding(markdown);
+  let document: MarkdownDocument;
+  let frontmatterError: FrontmatterParseError | undefined;
+  try {
+    document = parseFrontmatter(normalized);
+  } catch (error) {
+    frontmatterError = error instanceof FrontmatterParseError ? error : undefined;
+    const split = splitFrontmatter(normalized);
+    document = { ...split, data: {} };
+  }
   let blockNumber = 0;
   const blocks = parseBlockMarkdown(normalized, {
     idFactory: () => `compatibility-block-${blockNumber++}`,
   });
-  const serialized = serializeBlockMarkdown(blocks);
+  const serializedBody = serializeBlockMarkdown(blocks);
+  const serialized = `${document.source ?? ''}${serializedBody}`;
   const sourceForComparison =
     normalized.length === 0 || normalized.endsWith('\n') ? normalized : `${normalized}\n`;
-  const issues = findIssues(normalized);
+  const issues = findIssues(document.body, document.lineCount);
+  if (frontmatterError) {
+    issues.unshift(
+      issue(
+        'frontmatter',
+        document.lineCount > 0 ? (frontmatterError.line ?? 1) + 1 : 1,
+        normalized.split('\n')[frontmatterError.line ?? 0] ?? normalized,
+        frontmatterError.message
+      )
+    );
+  }
   if (issues.length === 0 && normalized.trim() && serialized !== sourceForComparison) {
     issues.push(
       issue(

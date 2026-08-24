@@ -16,6 +16,7 @@ import {
   outdentBlock as outdentCoreBlock,
   serializeBlockMarkdown,
   splitBlock as splitCoreBlock,
+  splitFrontmatter,
   toggleBlockCollapsed as toggleCoreBlockCollapsed,
   updateBlockContent as updateCoreBlockContent,
 } from '@loam/core';
@@ -49,6 +50,7 @@ export function assessOutlinerSafety(markdown: string): OutlinerSafety {
     table: 'tables',
     blockquote: 'block quotes',
     'raw-markdown': 'unsupported interleaving',
+    frontmatter: 'invalid YAML frontmatter',
   };
   return {
     safe: report.safe,
@@ -87,9 +89,11 @@ export function parseMarkdownBlocks(
 /** Serializes the render tree through the canonical core Markdown serializer. */
 export function serializeMarkdownBlocks(
   blocks: readonly OutlinerBlock[],
-  finalNewline = false
+  finalNewline = false,
+  frontmatterSource = ''
 ): string {
-  return serializeBlockMarkdown(flattenBlockTree(blocks), { finalNewline });
+  const prefix = splitFrontmatter(frontmatterSource).source ?? frontmatterSource;
+  return `${prefix}${serializeBlockMarkdown(flattenBlockTree(blocks), { finalNewline })}`;
 }
 
 export function updateBlockContent(

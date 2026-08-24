@@ -20,6 +20,10 @@ describe('Logseq helpers', () => {
     ]);
   });
 
+  it('does not index wiki links written only in frontmatter metadata', () => {
+    expect(extractPageLinks('---\nalias: "[[Not a page link]]"\n---\n- Body')).toEqual([]);
+  });
+
   it('builds backlinks from outgoing page references', () => {
     const pages = buildPageIndex([
       { title: 'Home', path: 'pages/Home.md', content: 'Read [[Projects]].' },

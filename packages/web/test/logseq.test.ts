@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { parseFrontmatter } from '@loam/core';
+import { describe, expect, it, vi } from 'vitest';
 import {
+  createPageFile,
   findJournalByDate,
   journalPathForDate,
   journalTitleForDate,
@@ -29,5 +31,44 @@ describe('journal helpers', () => {
   it('gives journal files a date-reference-friendly page title', () => {
     expect(localPageTitleFromPath('journals/2026_08_09.md')).toBe('2026-08-09');
     expect(localPageTitleFromPath('pages/Project___Now.md')).toBe('Project/Now');
+  });
+
+  it('creates pages with portable YAML frontmatter and a safe bullet body', async () => {
+    let written = '';
+    const writable = {
+      close: vi.fn(async () => undefined),
+      write: vi.fn(async (content: string) => {
+        written = content;
+      }),
+    };
+    const file = {
+      createWritable: async () => writable,
+      kind: 'file',
+      name: 'Project.md',
+    } as unknown as FileSystemFileHandle;
+    let lookup = 0;
+    const pages = {
+      getFileHandle: async (_name: string, options?: { create?: boolean }) => {
+        lookup += 1;
+        if (!options?.create) throw new DOMException('Missing', 'NotFoundError');
+        return file;
+      },
+      kind: 'directory',
+      name: 'pages',
+    } as unknown as FileSystemDirectoryHandle;
+    const root = {
+      getDirectoryHandle: async () => pages,
+      kind: 'directory',
+      name: 'graph',
+    } as unknown as FileSystemDirectoryHandle;
+
+    await createPageFile(root, 'Project');
+
+    const document = parseFrontmatter(written);
+    expect(lookup).toBe(2);
+    expect(document.data['loam-id']).toEqual(expect.any(String));
+    expect(document.data['loam-schema']).toBe(1);
+    expect(document.data.created).toEqual(expect.any(String));
+    expect(document.body).toBe('- ');
   });
 });

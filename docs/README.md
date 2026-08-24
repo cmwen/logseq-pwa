@@ -9,6 +9,7 @@ This directory contains project documentation and guides.
 - **api.md** - API documentation for public interfaces
 - **PRD.md** - Product requirements and scope
 - **ARD.md** - Block-model architecture decision
+- **adr/ADR-002-indexeddb-cache-worker-reconciliation.md** - Cache, frontmatter, and background reconciliation decision
 
 ## Quick Start
 

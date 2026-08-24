@@ -1,3 +1,5 @@
+import { splitFrontmatter } from './frontmatter.js';
+
 export interface PageLink {
   target: string;
   label: string;
@@ -54,10 +56,11 @@ export function pageFilenameForTitle(title: string): string {
 
 /** Reads Logseq's [[Page Name]] and [[Page Name|alias]] references from markdown. */
 export function extractPageLinks(content: string): PageLink[] {
+  const body = splitFrontmatter(content).body;
   const links: PageLink[] = [];
   const linkPattern = /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g;
 
-  for (const match of content.matchAll(linkPattern)) {
+  for (const match of body.matchAll(linkPattern)) {
     const target = match[1]?.trim();
     if (!target) {
       continue;

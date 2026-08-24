@@ -1,3 +1,5 @@
+import { splitFrontmatter } from '@loam/core';
+
 export type MarkdownAlignment = 'left' | 'center' | 'right' | null;
 
 export interface MarkdownTable {
@@ -95,7 +97,10 @@ function isFence(line: string): RegExpMatchArray | null {
 /** Parses the block-level Markdown supported by the page reader. */
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Block parsing is intentionally ordered so Markdown constructs win over paragraph fallback.
 export function parseMarkdownDocument(markdown: string): MarkdownNode[] {
-  const lines = markdown.replaceAll('\r\n', '\n').replaceAll('\r', '\n').split('\n');
+  const lines = splitFrontmatter(markdown)
+    .body.replaceAll('\r\n', '\n')
+    .replaceAll('\r', '\n')
+    .split('\n');
   const nodes: MarkdownNode[] = [];
 
   for (let index = 0; index < lines.length; index += 1) {

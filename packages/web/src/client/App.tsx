@@ -1,5 +1,22 @@
-import { buildPageIndex, flattenBlockTree, normalizePageTitle, type PageInput } from '@loam/core';
+import {
+  buildPageIndex,
+  extractPageLinks,
+  normalizePageTitle,
+  type PageInput,
+  parseFrontmatter,
+  splitFrontmatter,
+} from '@loam/core';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { type BlockSearchResult, indexPageBlocks, searchPageBlocks } from './block-index.js';
+import {
+  type CachedLinkEdge,
+  type CachedPageRecord,
+  createGraphCache,
+  GRAPH_CACHE_INDEXER_VERSION,
+  GRAPH_CACHE_SCHEMA_VERSION,
+  type GraphCache,
+  type GraphCacheSnapshot,
+} from './indexeddb-cache.js';
 import {
   appendJournalCapture,
   createPageFile,
@@ -9,7 +26,8 @@ import {
   journalTitleForDate,
   type LocalPage,
   pickLogseqFolder,
-  readLogseqFolder,
+  queryFolderPermission,
+  requestFolderPermission,
   savePage,
   supportsFolderAccess,
 } from './logseq.js';
@@ -26,9 +44,16 @@ import {
   parseMarkdownBlocks,
   serializeMarkdownBlocks,
 } from './outliner-model.js';
+import {
+  type CachedPageState,
+  type ReconciliationResult,
+  reconcileGraphInWorker,
+} from './reconciliation.js';
 import './styles.css';
 
 const todayTitle = journalTitleForDate();
+const activeGraphId = 'last-opened';
+const reconciliationStaleAfterMs = 5 * 60 * 1000;
 
 const demoPages: PageInput[] = [
   {
@@ -70,6 +95,7 @@ const demoPages: PageInput[] = [
 ];
 
 const demoIndex = buildPageIndex(demoPages);
+const demoBlockIndex = indexPageBlocks(demoIndex);
 
 type IconName =
   | 'arrow'
@@ -175,24 +201,167 @@ function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   }
 }
 
-function reindexPages(pages: LocalPage[]): LocalPage[] {
-  const handles = new Map(pages.map((page) => [page.path, page.handle]));
-  return buildPageIndex(pages.map(({ title, path, content }) => ({ title, path, content }))).map(
-    (page) => ({
+function reindexChangedPage(
+  pages: readonly LocalPage[],
+  changedPath: string,
+  content: string,
+  file?: File
+): LocalPage[] {
+  const source = pages.find((page) => page.path === changedPath);
+  if (!source) return [...pages];
+  const previousTargets = new Set(source.links.map((link) => normalizePageTitle(link.target)));
+  const links = extractPageLinks(content);
+  const nextTargets = new Set(links.map((link) => normalizePageTitle(link.target)));
+  const sourceTitleKey = normalizePageTitle(source.title);
+  let frontmatter = {};
+  let frontmatterSource = splitFrontmatter(content).source ?? undefined;
+  try {
+    const document = parseFrontmatter(content);
+    frontmatter = document.data;
+    frontmatterSource = document.source ?? undefined;
+  } catch {
+    // Malformed metadata remains editable in raw mode and is preserved verbatim.
+  }
+
+  return pages.map((page) => {
+    const target = normalizePageTitle(page.title);
+    const backlinks = new Set(page.backlinks);
+    if (previousTargets.has(target) && !nextTargets.has(target)) backlinks.delete(source.title);
+    if (nextTargets.has(target) && target !== sourceTitleKey) backlinks.add(source.title);
+    return {
       ...page,
-      handle: handles.get(page.path),
-    })
-  );
+      backlinks: [...backlinks].sort((left, right) => left.localeCompare(right)),
+      ...(page.path === changedPath
+        ? {
+            content,
+            frontmatter,
+            frontmatterSource,
+            lastModified: file?.lastModified ?? page.lastModified,
+            links,
+            size: file?.size ?? page.size,
+          }
+        : {}),
+    };
+  });
 }
 
-interface BlockSearchResult {
-  blockId: string;
-  content: string;
-  context?: string;
-  pagePath: string;
-  pageTitle: string;
-  references: string[];
-  searchable: string;
+function cachedPagesToLocal(
+  pages: readonly CachedPageRecord[],
+  edges: readonly CachedLinkEdge[] = []
+): LocalPage[] {
+  const backlinksByTarget = new Map<string, Set<string>>();
+  for (const edge of edges) {
+    const backlinks = backlinksByTarget.get(edge.targetTitleKey) ?? new Set<string>();
+    backlinks.add(edge.sourcePageTitle);
+    backlinksByTarget.set(edge.targetTitleKey, backlinks);
+  }
+  return pages.map(({ blocks: _blocks, fileHandle, graphId: _graphId, ...page }) => ({
+    ...page,
+    backlinks: [...(backlinksByTarget.get(normalizePageTitle(page.title)) ?? [])].sort(
+      (left, right) => left.localeCompare(right)
+    ),
+    handle: fileHandle,
+  }));
+}
+
+function localPageToCached(
+  page: LocalPage,
+  blocks: readonly BlockSearchResult[] = []
+): CachedPageRecord | undefined {
+  if (page.lastModified === undefined || page.size === undefined) return undefined;
+  return {
+    backlinks: [...page.backlinks],
+    blocks: blocks.map((block) => ({ ...block, references: [...block.references] })),
+    content: page.content,
+    fileHandle: page.handle,
+    frontmatter: page.frontmatter ? { ...page.frontmatter } : undefined,
+    frontmatterSource: page.frontmatterSource,
+    graphId: activeGraphId,
+    lastModified: page.lastModified,
+    links: page.links.map((link) => ({ ...link })),
+    path: page.path,
+    size: page.size,
+    title: page.title,
+  };
+}
+
+function pageLinkEdges(page: LocalPage): CachedLinkEdge[] {
+  return page.links.map((link, ordinal) => ({
+    graphId: activeGraphId,
+    label: link.label,
+    ordinal,
+    sourcePagePath: page.path,
+    sourcePageTitle: page.title,
+    targetTitleKey: normalizePageTitle(link.target),
+  }));
+}
+
+function cachedState(
+  pages: readonly LocalPage[],
+  blocks: readonly BlockSearchResult[]
+): CachedPageState[] {
+  const groupedBlocks = groupBlocksByPage(blocks);
+  return pages.flatMap((page) => {
+    if (page.lastModified === undefined || page.size === undefined) return [];
+    return [
+      {
+        content: page.content,
+        blocks: groupedBlocks.get(page.path) ?? [],
+        lastModified: page.lastModified,
+        frontmatter: page.frontmatter ? { ...page.frontmatter } : undefined,
+        frontmatterSource: page.frontmatterSource,
+        path: page.path,
+        size: page.size,
+        title: page.title,
+      },
+    ];
+  });
+}
+
+function groupBlocksByPage(blocks: readonly BlockSearchResult[]): Map<string, BlockSearchResult[]> {
+  const grouped = new Map<string, BlockSearchResult[]>();
+  for (const block of blocks) {
+    const pageBlocks = grouped.get(block.pagePath) ?? [];
+    pageBlocks.push(block);
+    grouped.set(block.pagePath, pageBlocks);
+  }
+  return grouped;
+}
+
+function groupBacklinkBlocks(
+  blocks: readonly BlockSearchResult[]
+): Map<string, BlockSearchResult[]> {
+  const grouped = new Map<string, BlockSearchResult[]>();
+  for (const block of blocks) {
+    const targets = new Set(block.references.map(normalizePageTitle));
+    for (const target of targets) {
+      const backlinks = grouped.get(target) ?? [];
+      backlinks.push(block);
+      grouped.set(target, backlinks);
+    }
+  }
+  return grouped;
+}
+
+async function isSameDirectory(
+  left: FileSystemDirectoryHandle | undefined,
+  right: FileSystemDirectoryHandle
+): Promise<boolean> {
+  if (!left) return false;
+  try {
+    return await left.isSameEntry(right);
+  } catch {
+    return false;
+  }
+}
+
+async function loadRecoverableSnapshot(cache: GraphCache): Promise<GraphCacheSnapshot> {
+  try {
+    return await cache.load(activeGraphId);
+  } catch {
+    await cache.clearGraph(activeGraphId);
+    return { edges: [], pages: [], status: cache.status };
+  }
 }
 
 interface PaletteCommand {
@@ -202,42 +371,6 @@ interface PaletteCommand {
   label: string;
   run: () => void | Promise<void>;
   shortcut?: string;
-}
-
-function indexPageBlocks(pages: LocalPage[]): BlockSearchResult[] {
-  const results: BlockSearchResult[] = [];
-  for (const page of pages) {
-    const blocks = flattenBlockTree(parseMarkdownBlocks(page.content, page.path, page.title));
-    const byId = new Map(blocks.map((block) => [block.id, block]));
-    for (const block of blocks) {
-      const searchable = [
-        page.title,
-        block.content,
-        ...block.references,
-        ...block.tags,
-        ...Object.entries(block.properties).flat(),
-      ]
-        .join(' ')
-        .toLocaleLowerCase();
-      const parent = block.parentId ? byId.get(block.parentId) : undefined;
-      results.push({
-        blockId: block.id,
-        content: block.content.split('\n')[0] || 'Empty block',
-        context: parent?.content.split('\n')[0],
-        pagePath: page.path,
-        pageTitle: page.title,
-        references: block.references,
-        searchable,
-      });
-    }
-  }
-  return results;
-}
-
-function searchPageBlocks(index: BlockSearchResult[], search: string): BlockSearchResult[] {
-  const query = search.trim().toLocaleLowerCase();
-  if (!query) return [];
-  return index.filter((result) => result.searchable.includes(query)).slice(0, 40);
 }
 
 function EmptyState({ onOpen, supported }: { onOpen: () => void; supported: boolean }) {
@@ -266,6 +399,7 @@ function EmptyState({ onOpen, supported }: { onOpen: () => void; supported: bool
 export function App() {
   const [root, setRoot] = useState<FileSystemDirectoryHandle>();
   const [pages, setPages] = useState<LocalPage[]>(demoIndex);
+  const [blockIndex, setBlockIndex] = useState<BlockSearchResult[]>(demoBlockIndex);
   const [selectedTitle, setSelectedTitle] = useState(todayTitle);
   const [search, setSearch] = useState('');
   const [isDemo, setIsDemo] = useState(true);
@@ -274,11 +408,14 @@ export function App() {
   const [editorBlocks, setEditorBlocks] = useState<OutlinerBlock[]>([]);
   const [editorKind, setEditorKind] = useState<'outliner' | 'raw'>('outliner');
   const [editorFinalNewline, setEditorFinalNewline] = useState(false);
+  const [editorFrontmatter, setEditorFrontmatter] = useState('');
   const [focusedBlockId, setFocusedBlockId] = useState<string>();
   const [searchHistory, setSearchHistory] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [notice, setNotice] = useState('');
+  const [syncStatus, setSyncStatus] = useState('');
+  const [hasFolderPermission, setHasFolderPermission] = useState(false);
   const [newPageTitle, setNewPageTitle] = useState('');
   const [captureText, setCaptureText] = useState('');
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
@@ -288,6 +425,13 @@ export function App() {
   const searchInput = useRef<HTMLInputElement>(null);
   const commandInput = useRef<HTMLInputElement>(null);
   const createPageInput = useRef<HTMLInputElement>(null);
+  const cachePromise = useRef<Promise<GraphCache> | null>(null);
+  const cacheWriteQueue = useRef<Promise<void>>(Promise.resolve());
+  const pagesRef = useRef<LocalPage[]>(demoIndex);
+  const blockIndexRef = useRef<BlockSearchResult[]>(demoBlockIndex);
+  const reconciliationAbort = useRef<AbortController | null>(null);
+  const reconciliationGeneration = useRef(0);
+  const lastReconciledAt = useRef(0);
 
   const selectedPage = pages.find((page) => page.title === selectedTitle) ?? pages[0];
   const filteredPages = useMemo(() => {
@@ -295,20 +439,15 @@ export function App() {
     if (!query) return pages;
     return pages.filter((page) => `${page.title} ${page.path}`.toLocaleLowerCase().includes(query));
   }, [pages, search]);
-  const blockIndex = useMemo(() => indexPageBlocks(pages), [pages]);
   const blockSearchResults = useMemo(
     () => searchPageBlocks(blockIndex, search),
     [blockIndex, search]
   );
+  const backlinkBlocks = useMemo(() => groupBacklinkBlocks(blockIndex), [blockIndex]);
   const selectedBacklinks = useMemo(() => {
     if (!selectedPage) return [];
-    const target = normalizePageTitle(selectedPage.title);
-    return blockIndex
-      .filter((result) =>
-        result.references.some((reference) => normalizePageTitle(reference) === target)
-      )
-      .slice(0, 30);
-  }, [blockIndex, selectedPage]);
+    return (backlinkBlocks.get(normalizePageTitle(selectedPage.title)) ?? []).slice(0, 30);
+  }, [backlinkBlocks, selectedPage]);
   const journalPages = useMemo(
     () =>
       pages
@@ -324,6 +463,138 @@ export function App() {
     setNotice(message);
     window.setTimeout(() => setNotice(''), 4200);
   }, []);
+
+  const ensureFolderAccess = useCallback(
+    async (handle: FileSystemDirectoryHandle): Promise<boolean> => {
+      const granted = await requestFolderPermission(handle);
+      setHasFolderPermission(granted);
+      if (!granted) showNotice('Folder access is needed to change this graph.');
+      return granted;
+    },
+    [showNotice]
+  );
+
+  const getCache = useCallback((): Promise<GraphCache> => {
+    cachePromise.current ??= createGraphCache();
+    return cachePromise.current;
+  }, []);
+
+  const enqueueCacheWrite = useCallback((write: () => Promise<void>): Promise<void> => {
+    const queued = cacheWriteQueue.current.catch(() => undefined).then(write);
+    cacheWriteQueue.current = queued.catch(() => undefined);
+    return queued;
+  }, []);
+
+  const replacePages = useCallback((next: LocalPage[]): void => {
+    pagesRef.current = next;
+    setPages(next);
+  }, []);
+
+  const replaceBlockIndex = useCallback((next: BlockSearchResult[]): void => {
+    blockIndexRef.current = next;
+    setBlockIndex(next);
+  }, []);
+
+  const persistReconciliation = useCallback(
+    async (
+      cache: GraphCache,
+      rootHandle: FileSystemDirectoryHandle,
+      result: ReconciliationResult
+    ): Promise<void> => {
+      const blocksByPage = groupBlocksByPage(result.blockIndex);
+      const pagesByPath = new Map(result.pages.map((page) => [page.path, page]));
+      for (const path of result.changedPaths) {
+        const page = pagesByPath.get(path);
+        if (!page) continue;
+        const record = localPageToCached(page, blocksByPage.get(path) ?? []);
+        if (record) await cache.replacePageProjection(record, pageLinkEdges(page));
+      }
+      await cache.removePages(activeGraphId, result.deletedPaths);
+      await cache.saveGraph({
+        id: activeGraphId,
+        indexerVersion: GRAPH_CACHE_INDEXER_VERSION,
+        lastIndexedAt: Date.now(),
+        rootHandle,
+        schemaVersion: GRAPH_CACHE_SCHEMA_VERSION,
+      });
+    },
+    []
+  );
+
+  const reconcileFolder = useCallback(
+    async (
+      rootHandle: FileSystemDirectoryHandle,
+      previous: readonly LocalPage[],
+      force = false
+    ): Promise<LocalPage[]> => {
+      reconciliationAbort.current?.abort();
+      const controller = new AbortController();
+      reconciliationAbort.current = controller;
+      const generation = reconciliationGeneration.current + 1;
+      reconciliationGeneration.current = generation;
+      setSyncStatus('Checking graph for changes…');
+      try {
+        const result = await reconcileGraphInWorker(
+          rootHandle,
+          cachedState(previous, blockIndexRef.current),
+          {
+            force,
+            signal: controller.signal,
+            onProgress: ({ checked, discovered }) => {
+              if (generation !== reconciliationGeneration.current) return;
+              if (checked === discovered || checked % 25 === 0) {
+                setSyncStatus(`Checking graph… ${checked}/${discovered}`);
+              }
+            },
+          }
+        );
+        if (generation !== reconciliationGeneration.current) return pagesRef.current;
+        const nextPages: LocalPage[] = result.pages;
+        replacePages(nextPages);
+        replaceBlockIndex(result.blockIndex);
+        const cache = await getCache();
+        await enqueueCacheWrite(() => persistReconciliation(cache, rootHandle, result));
+        if (generation !== reconciliationGeneration.current) return pagesRef.current;
+        lastReconciledAt.current = Date.now();
+        return nextPages;
+      } finally {
+        if (generation === reconciliationGeneration.current) {
+          reconciliationAbort.current = null;
+          setSyncStatus('');
+        }
+      }
+    },
+    [enqueueCacheWrite, getCache, persistReconciliation, replaceBlockIndex, replacePages]
+  );
+
+  const applySavedPage = useCallback(
+    async (saved: LocalPage, content: string): Promise<void> => {
+      reconciliationGeneration.current += 1;
+      reconciliationAbort.current?.abort();
+      reconciliationAbort.current = null;
+      setSyncStatus('');
+      const file = saved.handle ? await saved.handle.getFile() : undefined;
+      const next = reindexChangedPage(pagesRef.current, saved.path, content, file);
+      replacePages(next);
+      const updated = next.find((page) => page.path === saved.path);
+      const nextBlocks = [
+        ...blockIndexRef.current.filter((block) => block.pagePath !== saved.path),
+        ...(updated ? indexPageBlocks([updated]) : []),
+      ];
+      replaceBlockIndex(nextBlocks);
+      const record = updated
+        ? localPageToCached(
+            updated,
+            nextBlocks.filter((block) => block.pagePath === saved.path)
+          )
+        : undefined;
+      if (record && updated) {
+        const cache = await getCache();
+        await enqueueCacheWrite(() => cache.replacePageProjection(record, pageLinkEdges(updated)));
+      }
+    },
+    [enqueueCacheWrite, getCache, replaceBlockIndex, replacePages]
+  );
 
   const openCommandPalette = useCallback(() => {
     setPaletteQuery('');
@@ -349,6 +620,82 @@ export function App() {
     },
     [closeCommandPalette, root, showNotice]
   );
+
+  useEffect(() => {
+    let active = true;
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Cache restoration coordinates version checks, permission recovery, and worker startup in one lifecycle.
+    void (async () => {
+      try {
+        const cache = await getCache();
+        const snapshot = await loadRecoverableSnapshot(cache);
+        if (!active) return;
+        const compatible =
+          snapshot.graph?.schemaVersion === GRAPH_CACHE_SCHEMA_VERSION &&
+          snapshot.graph.indexerVersion === GRAPH_CACHE_INDEXER_VERSION;
+        if (snapshot.graph && !compatible) {
+          await cache.clearGraph(activeGraphId);
+          return;
+        }
+        if (!snapshot.graph && snapshot.pages.length === 0) return;
+
+        const restoredPages = cachedPagesToLocal(snapshot.pages, snapshot.edges);
+        const restoredBlocks = snapshot.pages.flatMap((page) => page.blocks ?? []);
+        replacePages(restoredPages);
+        replaceBlockIndex(restoredBlocks);
+        setSelectedTitle((findJournalByDate(restoredPages) ?? restoredPages[0])?.title ?? '');
+        setFocusedBlockId(undefined);
+        setIsDemo(false);
+        const restoredRoot = snapshot.graph?.rootHandle;
+        if (!restoredRoot) {
+          setSyncStatus('Cached graph · reconnect folder to check for changes');
+          return;
+        }
+        setRoot(restoredRoot);
+        const permission = await queryFolderPermission(restoredRoot);
+        if (!active) return;
+        const granted = permission === 'granted';
+        setHasFolderPermission(granted);
+        if (!granted) {
+          setSyncStatus('Cached graph · refresh to reconnect folder');
+          return;
+        }
+        await reconcileFolder(restoredRoot, restoredPages);
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') return;
+        if (active) showNotice('Could not restore the cached graph. Open its folder to reconnect.');
+      }
+    })();
+    return () => {
+      active = false;
+      reconciliationAbort.current?.abort();
+      void cachePromise.current?.then((cache) => cache.close());
+    };
+  }, [getCache, reconcileFolder, replaceBlockIndex, replacePages, showNotice]);
+
+  useEffect(() => {
+    const reconcileWhenStale = (): void => {
+      if (
+        document.visibilityState !== 'visible' ||
+        !root ||
+        !hasFolderPermission ||
+        reconciliationAbort.current ||
+        Date.now() - lastReconciledAt.current < reconciliationStaleAfterMs
+      ) {
+        return;
+      }
+      void reconcileFolder(root, pagesRef.current).catch((error: unknown) => {
+        if (!(error instanceof DOMException && error.name === 'AbortError')) {
+          showNotice('Could not check the graph for external changes.');
+        }
+      });
+    };
+    document.addEventListener('visibilitychange', reconcileWhenStale);
+    window.addEventListener('focus', reconcileWhenStale);
+    return () => {
+      document.removeEventListener('visibilitychange', reconcileWhenStale);
+      window.removeEventListener('focus', reconcileWhenStale);
+    };
+  }, [hasFolderPermission, reconcileFolder, root, showNotice]);
 
   useEffect(() => {
     const handleGlobalKeyDown = (event: KeyboardEvent) => {
@@ -382,13 +729,7 @@ export function App() {
       setIsSaving(true);
       try {
         await savePage(page, content, page.content);
-        setPages((current) =>
-          reindexPages(
-            current.map((candidate) =>
-              candidate.path === page.path ? { ...candidate, content } : candidate
-            )
-          )
-        );
+        await applySavedPage(page, content);
         localStorage.removeItem(`loam:draft:${page.path}`);
       } catch (error) {
         localStorage.setItem(`loam:draft:${page.path}`, content);
@@ -398,21 +739,27 @@ export function App() {
       }
     }, 900);
     return () => window.clearTimeout(timeout);
-  }, [draft, isDemo, isEditing, selectedPage, showNotice]);
+  }, [applySavedPage, draft, isDemo, isEditing, selectedPage, showNotice]);
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Folder switching deliberately keeps picker, cache identity, journal creation, and UI handoff atomic.
   const openFolder = async () => {
     setIsLoading(true);
     try {
       const handle = await pickLogseqFolder();
-      let loadedPages = await readLogseqFolder(handle);
+      const cache = await getCache();
+      const snapshot = await loadRecoverableSnapshot(cache);
+      const sameGraph = await isSameDirectory(snapshot.graph?.rootHandle, handle);
+      if (!sameGraph) await cache.clearGraph(activeGraphId);
+      const previous = sameGraph ? cachedPagesToLocal(snapshot.pages, snapshot.edges) : [];
+      setRoot(handle);
+      setHasFolderPermission(true);
+      let loadedPages = await reconcileFolder(handle, previous, !sameGraph);
       if (!findJournalByDate(loadedPages)) {
         await ensureJournalFile(handle);
-        loadedPages = await readLogseqFolder(handle);
+        loadedPages = await reconcileFolder(handle, loadedPages);
       }
-      setRoot(handle);
-      setPages(loadedPages);
       setFocusedBlockId(undefined);
-      setSelectedTitle((findJournalByDate(loadedPages) ?? loadedPages[0]).title);
+      setSelectedTitle((findJournalByDate(loadedPages) ?? loadedPages[0])?.title ?? '');
       setIsDemo(false);
       setIsEditing(false);
       showNotice(`${loadedPages.length} pages connected from your local graph.`);
@@ -428,15 +775,22 @@ export function App() {
     if (!root) return openFolder();
     setIsLoading(true);
     try {
-      const loadedPages = await readLogseqFolder(root);
-      setPages(loadedPages);
+      if (!(await requestFolderPermission(root))) {
+        setHasFolderPermission(false);
+        showNotice('Folder access is needed to refresh this graph.');
+        return;
+      }
+      setHasFolderPermission(true);
+      const loadedPages = await reconcileFolder(root, pagesRef.current, true);
       setFocusedBlockId(undefined);
       setSelectedTitle((current) =>
         loadedPages.some((page) => page.title === current) ? current : (loadedPages[0]?.title ?? '')
       );
-      showNotice('Graph refreshed from disk.');
+      showNotice('Graph refreshed and its cache rebuilt from disk.');
     } catch (error) {
-      showNotice(error instanceof Error ? error.message : 'Could not refresh the graph.');
+      if (!(error instanceof DOMException && error.name === 'AbortError')) {
+        showNotice(error instanceof Error ? error.message : 'Could not refresh the graph.');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -466,9 +820,9 @@ export function App() {
 
     setIsLoading(true);
     try {
+      if (!(await ensureFolderAccess(root))) return;
       await ensureJournalFile(root);
-      const loadedPages = await readLogseqFolder(root);
-      setPages(loadedPages);
+      const loadedPages = await reconcileFolder(root, pagesRef.current);
       const today = findJournalByDate(loadedPages);
       if (today) selectPage(today.title);
     } catch (error) {
@@ -498,10 +852,16 @@ export function App() {
 
   const startEditing = () => {
     if (!selectedPage) return;
+    if (!isDemo && !hasFolderPermission) {
+      showNotice('Refresh the graph to reconnect its folder before editing.');
+      return;
+    }
     const recovered = localStorage.getItem(`loam:draft:${selectedPage.path}`);
     const content = recovered ?? selectedPage.content;
+    const document = splitFrontmatter(content);
     setDraft(content);
-    setEditorFinalNewline(content.endsWith('\n'));
+    setEditorFrontmatter(document.source ?? '');
+    setEditorFinalNewline(document.body.endsWith('\n'));
     const safety = assessOutlinerSafety(content);
     setEditorKind(safety.safe ? 'outliner' : 'raw');
     setEditorBlocks(parseMarkdownBlocks(content, selectedPage.path, selectedPage.title));
@@ -514,13 +874,7 @@ export function App() {
     setIsSaving(true);
     try {
       if (!isDemo) await savePage(selectedPage, draft, selectedPage.content);
-      setPages((current) =>
-        reindexPages(
-          current.map((page) =>
-            page.path === selectedPage.path ? { ...page, content: draft } : page
-          )
-        )
-      );
+      await applySavedPage(selectedPage, draft);
       setIsEditing(false);
       localStorage.removeItem(`loam:draft:${selectedPage.path}`);
       showNotice(
@@ -535,7 +889,7 @@ export function App() {
   };
 
   const updateEditor = (blocks: OutlinerBlock[]) => {
-    const content = serializeMarkdownBlocks(blocks, editorFinalNewline);
+    const content = serializeMarkdownBlocks(blocks, editorFinalNewline, editorFrontmatter);
     setEditorBlocks(blocks);
     setDraft(content);
     if (selectedPage) localStorage.setItem(`loam:draft:${selectedPage.path}`, content);
@@ -546,9 +900,9 @@ export function App() {
     const title = newPageTitle.trim();
     if (!root || !title) return;
     try {
+      if (!(await ensureFolderAccess(root))) return;
       await createPageFile(root, title);
-      const loadedPages = await readLogseqFolder(root);
-      setPages(loadedPages);
+      const loadedPages = await reconcileFolder(root, pagesRef.current);
       const created = loadedPages.find(
         (page) => normalizePageTitle(page.title) === normalizePageTitle(title)
       );
@@ -567,9 +921,12 @@ export function App() {
     const captured = captureText.trim();
     setCaptureText('');
     try {
+      if (!(await ensureFolderAccess(root))) {
+        setCaptureText(captured);
+        return;
+      }
       await appendJournalCapture(root, captured);
-      const loadedPages = await readLogseqFolder(root);
-      setPages(loadedPages);
+      const loadedPages = await reconcileFolder(root, pagesRef.current);
       const today = findJournalByDate(loadedPages);
       if (today) selectPage(today.title);
       showNotice('Captured in today’s journal.');
@@ -777,7 +1134,9 @@ export function App() {
             <div className='folder-tip'>
               <Icon name='spark' size={16} />
               <span>
-                {isDemo ? 'Your graph stays local.' : `${pages.length} markdown pages indexed.`}
+                {isDemo
+                  ? 'Your graph stays local.'
+                  : syncStatus || `${pages.length} markdown pages indexed.`}
               </span>
             </div>
             <button

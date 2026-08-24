@@ -43,6 +43,8 @@ The core package has no browser or filesystem dependency, so the indexing behavi
 4. Saving calls `FileSystemFileHandle.createWritable()` for the selected page.
 5. Refreshing repeats the read/index pass so edits made in Logseq or another editor appear.
 
+For subsequent launches, Loam loads the last consistent graph projection from IndexedDB and renders it while a dedicated Web Worker reconciles the selected folder in the background. Reconciliation compares file metadata and reads/parses only new or changed Markdown files, then incrementally replaces their blocks and link edges. IndexedDB is a rebuildable cache; Markdown remains authoritative. See [ADR-002](adr/ADR-002-indexeddb-cache-worker-reconciliation.md) for the decision, permission behavior, and recovery limits.
+
 The demo graph is in-memory and read-only. It exists so the UI and link interactions can be evaluated before a folder is granted.
 
 ### Automation surfaces

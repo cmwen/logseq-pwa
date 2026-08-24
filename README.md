@@ -14,8 +14,9 @@ Loam is a small, journal-first block outliner for a local Markdown workspace. It
 - Route rich or unsupported Markdown to an exact-source fallback editor instead of rewriting its syntax.
 - Open today's journal first, navigate existing journals, and quick-capture a block to today from anywhere.
 - Search individual blocks, including references, tags, and properties, with parent context.
-- Create a new page under the graph's `pages/` directory.
-- Refresh the index after changing files outside Loam.
+- Create a new page with portable YAML frontmatter under the graph's `pages/` directory.
+- Restore a cached graph from IndexedDB, then reconcile changed files in a Web Worker.
+- Refresh the index after changing files outside Loam, including a manual full rebuild.
 - Install the static shell as a PWA and use the demo graph before opening a folder.
 - Resolve local image attachments from the selected graph without uploading them.
 - Automate the same graph through the `loam` CLI, a loopback REST server, or the MCP server.

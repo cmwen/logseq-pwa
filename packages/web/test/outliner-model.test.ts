@@ -44,6 +44,15 @@ describe('outliner model', () => {
     );
   });
 
+  it('keeps YAML frontmatter outside the structured block model', () => {
+    const frontmatter = '---\nloam-id: page-1\ntags: [project]\n---\n';
+    const markdown = `${frontmatter}- Parent\n  - Child\n`;
+    const blocks = parseMarkdownBlocks(markdown, 'pages/one.md', 'one');
+
+    expect(blocks[0]?.content).toBe('Parent');
+    expect(serializeMarkdownBlocks(blocks, true, frontmatter)).toBe(markdown);
+  });
+
   it('splits and merges blocks without losing nested content', () => {
     const blocks = parseMarkdownBlocks('- Useful context\n  - Evidence');
     const split = splitBlock(blocks, blocks[0].id, 'Useful', ' context');

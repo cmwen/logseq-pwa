@@ -1,3 +1,4 @@
+import { splitFrontmatter } from './frontmatter.js';
 import { extractPageLinks } from './logseq.js';
 
 export interface Block {
@@ -217,6 +218,10 @@ export function parseBlockMarkdown(
   markdown: string,
   options: ParseBlockMarkdownOptions = {}
 ): Block[] {
+  // Frontmatter is document metadata, not a user-visible Logseq block. Delimiter detection is
+  // deliberately kept separate from YAML parsing so the compatibility gate can report malformed
+  // metadata before a structured editor attempts to rewrite the document.
+  const body = splitFrontmatter(markdown).body;
   const state: MarkdownParseState = {
     blocks: [],
     positions: new Map<string | null, number>(),
@@ -226,7 +231,7 @@ export function parseBlockMarkdown(
     tabSize: options.tabSize ?? 2,
   };
 
-  for (const rawLine of markdown.replaceAll('\r\n', '\n').replaceAll('\r', '\n').split('\n')) {
+  for (const rawLine of body.replaceAll('\r\n', '\n').replaceAll('\r', '\n').split('\n')) {
     if (parseBulletLine(state, rawLine)) {
       continue;
     }
