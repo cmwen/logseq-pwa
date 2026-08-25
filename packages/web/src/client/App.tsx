@@ -3,11 +3,20 @@ import {
   extractPageLinks,
   normalizePageTitle,
   type PageInput,
+  pageFilenameForTitle,
   parseFrontmatter,
   splitFrontmatter,
 } from '@loam/core';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { type BlockSearchResult, indexPageBlocks, searchPageBlocks } from './block-index.js';
+import {
+  buildPageHierarchy,
+  buildTagSummaries,
+  type PageHierarchyNode,
+  pageBreadcrumbs,
+  parseDatePrimitive,
+  type TagSummary,
+} from './graph-model.js';
 import {
   type CachedLinkEdge,
   type CachedPageRecord,
@@ -55,12 +64,27 @@ const todayTitle = journalTitleForDate();
 const activeGraphId = 'last-opened';
 const reconciliationStaleAfterMs = 5 * 60 * 1000;
 
+function dateFromPageTitle(title: string): Date | undefined {
+  const parsed = parseDatePrimitive(title);
+  if (!parsed) return undefined;
+  const year = parsed.getUTCFullYear();
+  const month = parsed.getUTCMonth() + 1;
+  const day = parsed.getUTCDate();
+  const date = new Date(year, month - 1, day, 12);
+  return date;
+}
+
+function pageReferenceKey(title: string): string {
+  const date = parseDatePrimitive(title);
+  return date ? date.toISOString().slice(0, 10) : normalizePageTitle(title);
+}
+
 const demoPages: PageInput[] = [
   {
     title: todayTitle,
     path: journalPathForDate(),
     content:
-      '- Welcome to your daily journal\n  - Press Enter to create a block\n  - Press Tab to nest it beneath the previous thought\n- Try the editor, then open your local graph when you are ready.\n',
+      '- Welcome to your daily journal\n  - Press Enter to create a block\n  - Press Tab to nest it beneath the previous thought\n- Explore [[Projects/Loam]] #today\n- Try the editor, then open your local graph when you are ready.\n',
   },
   {
     title: 'Welcome to Loam',
@@ -72,7 +96,18 @@ const demoPages: PageInput[] = [
     title: 'Working set',
     path: 'pages/Working_set.md',
     content:
-      '- TODO Sketch the first release\n  - DONE Set up local folder access\n  - TODO Link the page view to [[Reading list]]\n- The best next step is usually the one that makes the graph feel more alive.\n  - See [[Welcome to Loam]] for the short tour.\n',
+      '- TODO Sketch the first release\n  - DONE Set up local folder access\n  - TODO Link the page view to [[Reading list]]\n- The best next step is usually the one that makes the graph feel more alive.\n  - See [[Welcome to Loam]] for the short tour.\n  - Follow the hierarchy into [[Projects/Loam]].\n',
+  },
+  {
+    title: 'Projects/Loam',
+    path: 'pages/Projects___Loam.md',
+    content: `# Loam roadmap
+
+A page can mix Markdown primitives with connected blocks.
+
+- Make relationships visible #project
+- Next review: [[${todayTitle}]]
+`,
   },
   {
     title: 'Reading list',
@@ -106,10 +141,13 @@ type IconName =
   | 'edit'
   | 'folder'
   | 'link'
+  | 'moon'
   | 'plus'
   | 'refresh'
   | 'search'
-  | 'spark';
+  | 'spark'
+  | 'sun'
+  | 'tag';
 
 function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   const common = {
@@ -173,6 +211,12 @@ function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
           <path d='M10 13.5 14 10M7.5 17.5l-1 1a3.5 3.5 0 0 1-5-5l3-3a3.5 3.5 0 0 1 5 0M16.5 6.5l1-1a3.5 3.5 0 0 1 5 5l-3 3a3.5 3.5 0 0 1-5 0' />
         </svg>
       );
+    case 'moon':
+      return (
+        <svg aria-hidden='true' {...common}>
+          <path d='M20 15.2A8.2 8.2 0 0 1 8.8 4a8.2 8.2 0 1 0 11.2 11.2z' />
+        </svg>
+      );
     case 'plus':
       return (
         <svg aria-hidden='true' {...common}>
@@ -198,6 +242,20 @@ function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
           <path d='m12 3 1.2 5.8L19 10l-5.8 1.2L12 17l-1.2-5.8L5 10l5.8-1.2zM19 16l.5 2.5L22 19l-2.5.5L19 22l-.5-2.5L16 19l2.5-.5z' />
         </svg>
       );
+    case 'sun':
+      return (
+        <svg aria-hidden='true' {...common}>
+          <circle cx='12' cy='12' r='3.5' />
+          <path d='M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4' />
+        </svg>
+      );
+    case 'tag':
+      return (
+        <svg aria-hidden='true' {...common}>
+          <path d='M20 13 13 20l-9-9V4h7z' />
+          <circle cx='8' cy='8' r='1.2' />
+        </svg>
+      );
   }
 }
 
@@ -209,10 +267,10 @@ function reindexChangedPage(
 ): LocalPage[] {
   const source = pages.find((page) => page.path === changedPath);
   if (!source) return [...pages];
-  const previousTargets = new Set(source.links.map((link) => normalizePageTitle(link.target)));
+  const previousTargets = new Set(source.links.map((link) => pageReferenceKey(link.target)));
   const links = extractPageLinks(content);
-  const nextTargets = new Set(links.map((link) => normalizePageTitle(link.target)));
-  const sourceTitleKey = normalizePageTitle(source.title);
+  const nextTargets = new Set(links.map((link) => pageReferenceKey(link.target)));
+  const sourceTitleKey = pageReferenceKey(source.title);
   let frontmatter = {};
   let frontmatterSource = splitFrontmatter(content).source ?? undefined;
   try {
@@ -224,7 +282,7 @@ function reindexChangedPage(
   }
 
   return pages.map((page) => {
-    const target = normalizePageTitle(page.title);
+    const target = pageReferenceKey(page.title);
     const backlinks = new Set(page.backlinks);
     if (previousTargets.has(target) && !nextTargets.has(target)) backlinks.delete(source.title);
     if (nextTargets.has(target) && target !== sourceTitleKey) backlinks.add(source.title);
@@ -257,7 +315,7 @@ function cachedPagesToLocal(
   }
   return pages.map(({ blocks: _blocks, fileHandle, graphId: _graphId, ...page }) => ({
     ...page,
-    backlinks: [...(backlinksByTarget.get(normalizePageTitle(page.title)) ?? [])].sort(
+    backlinks: [...(backlinksByTarget.get(pageReferenceKey(page.title)) ?? [])].sort(
       (left, right) => left.localeCompare(right)
     ),
     handle: fileHandle,
@@ -292,7 +350,7 @@ function pageLinkEdges(page: LocalPage): CachedLinkEdge[] {
     ordinal,
     sourcePagePath: page.path,
     sourcePageTitle: page.title,
-    targetTitleKey: normalizePageTitle(link.target),
+    targetTitleKey: pageReferenceKey(link.target),
   }));
 }
 
@@ -333,7 +391,7 @@ function groupBacklinkBlocks(
 ): Map<string, BlockSearchResult[]> {
   const grouped = new Map<string, BlockSearchResult[]>();
   for (const block of blocks) {
-    const targets = new Set(block.references.map(normalizePageTitle));
+    const targets = new Set(block.references.map(pageReferenceKey));
     for (const target of targets) {
       const backlinks = grouped.get(target) ?? [];
       backlinks.push(block);
@@ -395,6 +453,95 @@ function EmptyState({ onOpen, supported }: { onOpen: () => void; supported: bool
   );
 }
 
+function flattenHierarchy(nodes: readonly PageHierarchyNode[]): PageHierarchyNode[] {
+  return nodes.flatMap((node) => [node, ...flattenHierarchy(node.children)]);
+}
+
+function TagsView({
+  activeTag,
+  onOpenPage,
+  onSelectTag,
+  pages,
+  summaries,
+}: {
+  activeTag: string;
+  onOpenPage: (title: string) => void;
+  onSelectTag: (tag: string) => void;
+  pages: readonly LocalPage[];
+  summaries: readonly TagSummary[];
+}) {
+  const selected = summaries.find((summary) => summary.tag === activeTag);
+  const pagePaths = selected
+    ? selected.pagePaths
+    : [...new Set(summaries.flatMap((summary) => summary.pagePaths))];
+  const taggedPages = pagePaths.flatMap((path) => {
+    const page = pages.find((candidate) => candidate.path === path);
+    return page ? [page] : [];
+  });
+
+  return (
+    <article className='page-card tags-page'>
+      <div className='tags-heading'>
+        <div>
+          <p className='page-kicker'>TAG INDEX</p>
+          <h1>{selected ? `#${selected.tag}` : 'Tags'}</h1>
+        </div>
+        <div className='page-stats'>
+          <span>
+            <Icon name='tag' size={14} /> {summaries.length} tags
+          </span>
+          <span>{taggedPages.length} pages</span>
+        </div>
+      </div>
+      {summaries.length ? (
+        <>
+          <fieldset className='tag-cloud'>
+            <legend className='sr-only'>Tags in this graph</legend>
+            <button
+              className={`tag-filter ${activeTag ? '' : 'tag-filter-active'}`}
+              onClick={() => onSelectTag('')}
+              type='button'
+            >
+              All <small>{summaries.length}</small>
+            </button>
+            {summaries.map((summary) => (
+              <button
+                aria-pressed={summary.tag === activeTag}
+                className={`tag-filter ${summary.tag === activeTag ? 'tag-filter-active' : ''}`}
+                key={summary.tag}
+                onClick={() => onSelectTag(summary.tag)}
+                type='button'
+              >
+                #{summary.tag} <small>{summary.pageCount}</small>
+              </button>
+            ))}
+          </fieldset>
+          <fieldset className='tag-page-list'>
+            <legend className='sr-only'>Pages with selected tag</legend>
+            {taggedPages.map((page) => (
+              <button
+                className='tag-page-card'
+                key={page.path}
+                onClick={() => onOpenPage(page.title)}
+                type='button'
+              >
+                <Icon name='book' size={16} />
+                <span className='tag-page-card-copy'>
+                  <strong>{page.title}</strong>
+                  <small>{page.path}</small>
+                </span>
+                <Icon name='chevron' size={14} />
+              </button>
+            ))}
+          </fieldset>
+        </>
+      ) : (
+        <p className='relation-empty'>No hashtags yet. Add #tags to any block to see them here.</p>
+      )}
+    </article>
+  );
+}
+
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: The app shell intentionally keeps the local graph workflow in one place.
 export function App() {
   const [root, setRoot] = useState<FileSystemDirectoryHandle>();
@@ -422,6 +569,14 @@ export function App() {
   const [isCreatePageOpen, setIsCreatePageOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState('');
   const [paletteSelection, setPaletteSelection] = useState(0);
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    if (typeof window === 'undefined') return 'light';
+    const saved = window.localStorage.getItem('loam:theme');
+    if (saved === 'dark' || saved === 'light') return saved;
+    return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  });
+  const [viewMode, setViewMode] = useState<'page' | 'tags'>('page');
+  const [activeTag, setActiveTag] = useState('');
   const searchInput = useRef<HTMLInputElement>(null);
   const commandInput = useRef<HTMLInputElement>(null);
   const createPageInput = useRef<HTMLInputElement>(null);
@@ -439,6 +594,11 @@ export function App() {
     if (!query) return pages;
     return pages.filter((page) => `${page.title} ${page.path}`.toLocaleLowerCase().includes(query));
   }, [pages, search]);
+  const hierarchyRows = useMemo(
+    () => flattenHierarchy(buildPageHierarchy(filteredPages).roots),
+    [filteredPages]
+  );
+  const tagSummaries = useMemo(() => buildTagSummaries(pages), [pages]);
   const blockSearchResults = useMemo(
     () => searchPageBlocks(blockIndex, search),
     [blockIndex, search]
@@ -446,7 +606,7 @@ export function App() {
   const backlinkBlocks = useMemo(() => groupBacklinkBlocks(blockIndex), [blockIndex]);
   const selectedBacklinks = useMemo(() => {
     if (!selectedPage) return [];
-    return (backlinkBlocks.get(normalizePageTitle(selectedPage.title)) ?? []).slice(0, 30);
+    return (backlinkBlocks.get(pageReferenceKey(selectedPage.title)) ?? []).slice(0, 30);
   }, [backlinkBlocks, selectedPage]);
   const journalPages = useMemo(
     () =>
@@ -458,11 +618,18 @@ export function App() {
   const selectedJournalIndex = selectedPage
     ? journalPages.findIndex((page) => page.path === selectedPage.path)
     : -1;
+  const selectedBreadcrumbs = selectedPage ? pageBreadcrumbs(selectedPage.title) : [];
   const supported = supportsFolderAccess();
   const showNotice = useCallback((message: string) => {
     setNotice(message);
     window.setTimeout(() => setNotice(''), 4200);
   }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+    window.localStorage.setItem('loam:theme', theme);
+  }, [theme]);
 
   const ensureFolderAccess = useCallback(
     async (handle: FileSystemDirectoryHandle): Promise<boolean> => {
@@ -800,6 +967,14 @@ export function App() {
     setSelectedTitle(title);
     setFocusedBlockId(blockId);
     setIsEditing(false);
+    setViewMode('page');
+  };
+
+  const openTag = (tag: string) => {
+    setActiveTag(tag.trim().toLocaleLowerCase());
+    setViewMode('tags');
+    setIsEditing(false);
+    setFocusedBlockId(undefined);
   };
 
   const openBlock = (result: BlockSearchResult) => {
@@ -837,16 +1012,61 @@ export function App() {
     if (journal) selectPage(journal.title);
   };
 
-  const openLink = (target: string) => {
-    const linkedPage = pages.find(
-      (page) => normalizePageTitle(page.title) === normalizePageTitle(target)
-    );
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Link activation coordinates existing navigation, demo creation, journal creation, and local-folder reconciliation.
+  const openLink = async (target: string) => {
+    const title = target.trim();
+    if (!title) return;
+    const date = dateFromPageTitle(title);
+    const linkedPage =
+      (date ? findJournalByDate(pages, date) : undefined) ??
+      pages.find((page) => normalizePageTitle(page.title) === normalizePageTitle(title));
     if (linkedPage) {
       selectPage(linkedPage.title);
-    } else {
-      showNotice(
-        `No page named “${target}” yet. Create it in your Logseq graph to complete the link.`
+      return;
+    }
+
+    if (isDemo) {
+      const createdTitle = date ? journalTitleForDate(date) : title;
+      const inputs: PageInput[] = [
+        ...pagesRef.current.map((page) => ({
+          content: page.content,
+          path: page.path,
+          title: page.title,
+        })),
+        {
+          content: '- ',
+          path: date ? journalPathForDate(date) : `pages/${pageFilenameForTitle(title)}`,
+          title: createdTitle,
+        },
+      ];
+      const next = buildPageIndex(inputs);
+      replacePages(next);
+      replaceBlockIndex(indexPageBlocks(next));
+      selectPage(createdTitle);
+      showNotice(`Created “${title}” in the demo graph.`);
+      return;
+    }
+
+    if (!root) {
+      showNotice('Reconnect the local graph before creating this linked page.');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      if (!(await ensureFolderAccess(root))) return;
+      if (date) await ensureJournalFile(root, date);
+      else await createPageFile(root, title);
+      const loadedPages = await reconcileFolder(root, pagesRef.current);
+      const created = loadedPages.find(
+        (page) => normalizePageTitle(page.title) === normalizePageTitle(title)
       );
+      if (created) selectPage(created.title);
+      showNotice(`Created “${title}” from its page link.`);
+    } catch (error) {
+      showNotice(error instanceof Error ? error.message : 'Could not create the linked page.');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -968,6 +1188,17 @@ export function App() {
       },
     },
     {
+      description: 'Browse hashtags across every page',
+      icon: 'tag' as const,
+      id: 'tags',
+      label: 'Open tags view',
+      run: () => {
+        closeCommandPalette();
+        setActiveTag('');
+        setViewMode('tags');
+      },
+    },
+    {
       description: 'Open today’s journal',
       icon: 'spark' as const,
       id: 'today',
@@ -1008,6 +1239,16 @@ export function App() {
           </div>
         </div>
         <div className='topbar-actions'>
+          <button
+            aria-label={`Use ${theme === 'dark' ? 'light' : 'dark'} theme`}
+            className='button button-quiet theme-toggle'
+            onClick={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
+            title={`Use ${theme === 'dark' ? 'light' : 'dark'} theme`}
+            type='button'
+          >
+            <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={16} />
+            <span>{theme === 'dark' ? 'Light' : 'Dark'}</span>
+          </button>
           <button
             aria-label='Open command palette'
             aria-keyshortcuts='Meta+K Control+K'
@@ -1081,28 +1322,63 @@ export function App() {
             <span className='today-date'>{journalTitleForDate()}</span>
           </button>
 
+          <button
+            className={`sidebar-view-button ${viewMode === 'tags' ? 'sidebar-view-button-active' : ''}`}
+            onClick={() => {
+              setActiveTag('');
+              setViewMode('tags');
+              setIsEditing(false);
+            }}
+            type='button'
+          >
+            <span className='page-nav-icon'>
+              <Icon name='tag' size={15} />
+            </span>
+            <span>Tags</span>
+            <span className='count-pill'>{tagSummaries.length}</span>
+          </button>
+
           <div className='sidebar-section-heading'>
             <span>Pages</span>
             <span className='count-pill'>{filteredPages.length}</span>
           </div>
           <nav className='page-list' aria-label='Pages'>
-            {filteredPages.map((page) => (
-              <button
-                className={`page-nav-item ${page.title === selectedPage?.title ? 'page-nav-active' : ''}`}
-                aria-current={page.title === selectedPage?.title ? 'page' : undefined}
-                key={page.path}
-                onClick={() => selectPage(page.title)}
-                type='button'
-              >
-                <span className='page-nav-icon'>
-                  <Icon name='book' size={15} />
-                </span>
-                <span className='page-nav-title'>{page.title}</span>
-                {page.backlinks.length > 0 && (
-                  <span className='page-nav-count'>{page.backlinks.length}</span>
-                )}
-              </button>
-            ))}
+            {hierarchyRows.map((node) =>
+              node.page ? (
+                <button
+                  aria-current={node.page.title === selectedPage?.title ? 'page' : undefined}
+                  className={`page-nav-item ${node.page.title === selectedPage?.title && viewMode === 'page' ? 'page-nav-active' : ''}`}
+                  key={node.page.path}
+                  onClick={() => selectPage(node.page?.title ?? '')}
+                  style={{ paddingLeft: `${10 + node.depth * 13}px` }}
+                  type='button'
+                >
+                  {node.depth > 0 && <span aria-hidden='true' className='page-nav-branch' />}
+                  <span className='page-nav-icon'>
+                    <Icon name='book' size={15} />
+                  </span>
+                  <span className='page-nav-title page-nav-leaf'>{node.breadcrumbs.at(-1)}</span>
+                  {(pages.find((page) => page.path === node.page?.path)?.backlinks.length ?? 0) >
+                    0 && (
+                    <span className='page-nav-count'>
+                      {pages.find((page) => page.path === node.page?.path)?.backlinks.length}
+                    </span>
+                  )}
+                </button>
+              ) : (
+                <div
+                  className='page-nav-item page-nav-synthetic'
+                  key={`group-${node.title}`}
+                  style={{ paddingLeft: `${10 + node.depth * 13}px` }}
+                >
+                  {node.depth > 0 && <span aria-hidden='true' className='page-nav-branch' />}
+                  <span className='page-nav-icon'>
+                    <Icon name='chevron' size={13} />
+                  </span>
+                  <span className='page-nav-title page-nav-parent'>{node.breadcrumbs.at(-1)}</span>
+                </div>
+              )
+            )}
             {!filteredPages.length && !blockSearchResults.length && (
               <p className='no-results'>No blocks or pages match “{search}”.</p>
             )}
@@ -1164,13 +1440,38 @@ export function App() {
         </aside>
 
         <main className='content-area'>
-          {selectedPage ? (
+          {viewMode === 'tags' ? (
+            <TagsView
+              activeTag={activeTag}
+              onOpenPage={selectPage}
+              onSelectTag={setActiveTag}
+              pages={pages}
+              summaries={tagSummaries}
+            />
+          ) : selectedPage ? (
             <>
               <div className='page-toolbar'>
                 <div className='breadcrumbs'>
                   <span>Pages</span>
-                  <Icon name='chevron' size={14} />
-                  <span>{selectedPage.title}</span>
+                  {selectedBreadcrumbs.map((part, index) => {
+                    const title = selectedBreadcrumbs.slice(0, index + 1).join('/');
+                    const page = pages.find(
+                      (candidate) =>
+                        normalizePageTitle(candidate.title) === normalizePageTitle(title)
+                    );
+                    return (
+                      <span className='breadcrumb-part' key={title}>
+                        <Icon name='chevron' size={14} />
+                        {page && index < selectedBreadcrumbs.length - 1 ? (
+                          <button onClick={() => selectPage(page.title)} type='button'>
+                            {part}
+                          </button>
+                        ) : (
+                          <span>{part}</span>
+                        )}
+                      </span>
+                    );
+                  })}
                 </div>
                 {focusedBlockId && !isEditing && (
                   <button
@@ -1232,7 +1533,7 @@ export function App() {
                       <Icon name='link' size={14} /> {selectedPage.links.length} links
                     </span>
                     <span>
-                      <Icon name='arrow' size={14} /> {selectedPage.backlinks.length} backlinks
+                      <Icon name='arrow' size={14} /> {selectedBacklinks.length} backlinks
                     </span>
                   </div>
                 </div>
@@ -1274,10 +1575,59 @@ export function App() {
                     focusedBlockId={focusedBlockId}
                     markdown={selectedPage.content}
                     onLink={openLink}
+                    onTag={openTag}
                     pagePath={selectedPage.path}
                     pageTitle={selectedPage.title}
                     root={root}
                   />
+                )}
+                {!isEditing && (
+                  <section className='connections-overview' aria-label='Page connections'>
+                    <div className='connections-overview-heading'>
+                      <div>
+                        <p className='eyebrow'>CONNECTIONS</p>
+                        <h2>Follow this page through the graph</h2>
+                      </div>
+                      <span>
+                        {selectedPage.links.length + selectedBacklinks.length} visible connections
+                      </span>
+                    </div>
+                    <div className='connection-columns'>
+                      <div>
+                        <p className='connection-column-title'>Linked from this page</p>
+                        <div className='connection-chips'>
+                          {selectedPage.links.slice(0, 8).map((link) => (
+                            <button
+                              key={`${link.target}-${link.label}`}
+                              onClick={() => openLink(link.target)}
+                              type='button'
+                            >
+                              <Icon name='link' size={13} />
+                              {link.label}
+                            </button>
+                          ))}
+                          {!selectedPage.links.length && <span>No outgoing page links yet.</span>}
+                        </div>
+                      </div>
+                      <div>
+                        <p className='connection-column-title'>Pages linking here</p>
+                        <div className='connection-chips'>
+                          {selectedBacklinks.slice(0, 8).map((backlink) => (
+                            <button
+                              key={`${backlink.pagePath}-${backlink.blockId}`}
+                              onClick={() => openBlock(backlink)}
+                              title={backlink.content}
+                              type='button'
+                            >
+                              <Icon name='arrow' size={13} />
+                              {backlink.pageTitle}
+                            </button>
+                          ))}
+                          {!selectedBacklinks.length && <span>No backlinks yet.</span>}
+                        </div>
+                      </div>
+                    </div>
+                  </section>
                 )}
               </article>
               <p className='privacy-line'>
@@ -1291,7 +1641,43 @@ export function App() {
         </main>
 
         <aside className='inspector'>
-          {selectedPage ? (
+          {viewMode === 'tags' ? (
+            <>
+              <div className='inspector-header'>
+                <p className='eyebrow'>TAG MAP</p>
+                <span className='inspector-dot' />
+              </div>
+              <section className='relation-card'>
+                <div className='relation-heading'>
+                  <span className='relation-icon relation-icon-cool'>
+                    <Icon name='tag' size={16} />
+                  </span>
+                  <div>
+                    <p className='relation-title'>Tags</p>
+                    <p className='relation-subtitle'>Topics across this graph</p>
+                  </div>
+                  <span className='relation-count'>{tagSummaries.length}</span>
+                </div>
+                {tagSummaries.length ? (
+                  <div className='relation-list'>
+                    {tagSummaries.slice(0, 20).map((summary) => (
+                      <button
+                        aria-current={summary.tag === activeTag ? 'true' : undefined}
+                        key={summary.tag}
+                        onClick={() => openTag(summary.tag)}
+                        type='button'
+                      >
+                        <span className='relation-bullet' />#{summary.tag}
+                        <span className='relation-count'>{summary.pageCount}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className='relation-empty'>No tags have been indexed yet.</p>
+                )}
+              </section>
+            </>
+          ) : selectedPage ? (
             <>
               <div className='inspector-header'>
                 <p className='eyebrow'>PAGE MAP</p>

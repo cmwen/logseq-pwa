@@ -1,6 +1,6 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { applyEditorCommand, type EditorCommand } from './editor-commands.js';
+import { applyDateReference, applyEditorCommand, type EditorCommand } from './editor-commands.js';
 import {
   addSiblingBlock,
   type BlockMutation,
@@ -70,6 +70,7 @@ export function OutlinerEditor({
   const [activeId, setActiveId] = useState<string | undefined>(initialBlocks[0]?.id);
   const [menuId, setMenuId] = useState<string>();
   const [focusRequest, setFocusRequest] = useState<FocusRequest>();
+  const [dateValue, setDateValue] = useState(() => formatDateInputValue(new Date()));
   const inputs = useRef(new Map<string, HTMLTextAreaElement>());
   const past = useRef<OutlinerBlock[][]>([]);
   const future = useRef<OutlinerBlock[][]>([]);
@@ -191,6 +192,26 @@ export function OutlinerEditor({
     };
     if (typeof requestAnimationFrame === 'function') requestAnimationFrame(restoreSelection);
     else restoreSelection();
+  };
+
+  const applyDateCommand = (date: string, id = activeId) => {
+    if (readOnly || !id || !date) return;
+    const block = findBlock(currentBlocks.current, id);
+    const input = inputs.current.get(id);
+    if (!block || !input) return;
+    const edit = applyDateReference(
+      input.value,
+      {
+        start: input.selectionStart ?? input.value.length,
+        end: input.selectionEnd ?? input.value.length,
+      },
+      date
+    );
+    if (edit.content === input.value) return;
+    commit(updateBlockContent(currentBlocks.current, id, edit.content), {
+      id,
+      caret: edit.selectionStart,
+    });
   };
 
   // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Keyboard commands are kept together so their precedence is explicit.
@@ -428,6 +449,20 @@ export function OutlinerEditor({
               text='(( ))'
             />
             <ActionButton label='Insert tag' onClick={() => applyTextCommand('tag')} text='#' />
+            <label className='outliner-date-picker'>
+              <span className='outliner-date-picker-label'>Date</span>
+              <input
+                aria-label='Date to insert'
+                onInput={(event) => setDateValue(event.currentTarget.value)}
+                type='date'
+                value={dateValue}
+              />
+            </label>
+            <ActionButton
+              label='Insert date'
+              onClick={() => applyDateCommand(dateValue)}
+              text='DATE'
+            />
             <ActionButton
               label='Cycle task status'
               onClick={() => applyTextCommand('cycle-task')}
@@ -693,4 +728,11 @@ function adjacentVisibleBlock(
 function resizeInput(input: HTMLTextAreaElement) {
   input.style.height = '0';
   input.style.height = `${input.scrollHeight}px`;
+}
+
+function formatDateInputValue(date: Date): string {
+  const year = String(date.getFullYear()).padStart(4, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }

@@ -1,6 +1,7 @@
 import { flattenBlockTree } from '@loam/core';
 import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useState } from 'preact/hooks';
+import { parseDatePrimitive } from './graph-model.js';
 import { resolveLocalAttachment } from './logseq.js';
 import {
   type MarkdownAlignment,
@@ -13,6 +14,7 @@ import { assessOutlinerSafety, parseMarkdownBlocks, stableBlockId } from './outl
 interface MarkdownInlineProps {
   imageSources: ReadonlyMap<string, string>;
   onLink: (target: string) => void;
+  onTag?: (tag: string) => void;
   text: string;
 }
 
@@ -45,7 +47,7 @@ function localImageReferences(markdown: string): string[] {
 }
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: The scanner keeps Markdown inline syntax and Logseq links in one ordered pass.
-function InlineContent({ imageSources, text, onLink }: MarkdownInlineProps) {
+function InlineContent({ imageSources, text, onLink, onTag }: MarkdownInlineProps) {
   const output: ComponentChildren[] = [];
   let cursor = 0;
   let textBuffer = '';
@@ -68,15 +70,23 @@ function InlineContent({ imageSources, text, onLink }: MarkdownInlineProps) {
       flushText();
       const reference = match[1] ?? '';
       const [target, label] = reference.split('|');
+      const date = parseDatePrimitive(target?.trim() ?? '');
       output.push(
         <button
-          className='inline-link'
+          className={`inline-link ${date ? 'inline-date-link' : ''}`.trim()}
           key={key('page-link')}
           onClick={() => onLink(target?.trim() ?? '')}
+          title={date ? `Open journal for ${date.toISOString().slice(0, 10)}` : undefined}
           type='button'
         >
           <LinkGlyph />
-          {label?.trim() || target?.trim()}
+          {date ? (
+            <time dateTime={date.toISOString().slice(0, 10)}>
+              {label?.trim() || target?.trim()}
+            </time>
+          ) : (
+            label?.trim() || target?.trim()
+          )}
         </button>
       );
       cursor += match[0].length;
@@ -86,22 +96,24 @@ function InlineContent({ imageSources, text, onLink }: MarkdownInlineProps) {
     match = remaining.match(/^#\[\[([^\]]+)\]\]/u);
     if (match) {
       flushText();
+      const tag = match[1]?.trim() ?? '';
       output.push(
-        <span className='tag' key={key('tag')}>
-          #{match[1]}
-        </span>
+        <button className='tag' key={key('tag')} onClick={() => onTag?.(tag)} type='button'>
+          #{tag}
+        </button>
       );
       cursor += match[0].length;
       continue;
     }
 
-    match = remaining.match(/^#([\w/-]+)/u);
+    match = remaining.match(/^#([\p{L}\p{N}_/-]+)/u);
     if (match) {
       flushText();
+      const tag = match[1] ?? '';
       output.push(
-        <span className='tag' key={key('tag')}>
-          #{match[1]}
-        </span>
+        <button className='tag' key={key('tag')} onClick={() => onTag?.(tag)} type='button'>
+          #{tag}
+        </button>
       );
       cursor += match[0].length;
       continue;
@@ -154,6 +166,50 @@ function InlineContent({ imageSources, text, onLink }: MarkdownInlineProps) {
       continue;
     }
 
+    match = remaining.match(/^(\d{4}-\d{2}-\d{2})(?!\d)/u);
+    if (match) {
+      flushText();
+      const date = match[1] ?? '';
+      output.push(
+        <button
+          className='date-primitive'
+          key={key('date')}
+          onClick={() => onLink(date)}
+          title={`Open journal for ${date}`}
+          type='button'
+        >
+          <time dateTime={date}>{date}</time>
+        </button>
+      );
+      cursor += match[0].length;
+      continue;
+    }
+
+    match = remaining.match(
+      /^(?:(?:[A-Za-z]{3,9}),?\s+)?\d{1,2}(?:st|nd|rd|th)?\s+[A-Za-z]{3,9}\s+\d{4}/iu
+    );
+    if (match) {
+      const rawDate = match[0];
+      const parsed = parseDatePrimitive(rawDate);
+      if (parsed) {
+        flushText();
+        const date = parsed.toISOString().slice(0, 10);
+        output.push(
+          <button
+            className='date-primitive'
+            key={key('date')}
+            onClick={() => onLink(date)}
+            title={`Open journal for ${date}`}
+            type='button'
+          >
+            <time dateTime={date}>{rawDate}</time>
+          </button>
+        );
+        cursor += rawDate.length;
+        continue;
+      }
+    }
+
     const styles: Array<{ pattern: RegExp; tag: 'strong' | 'em' | 'del' }> = [
       { pattern: /^\*\*([^*]+)\*\*/u, tag: 'strong' },
       { pattern: /^__([^_]+)__/u, tag: 'strong' },
@@ -169,7 +225,12 @@ function InlineContent({ imageSources, text, onLink }: MarkdownInlineProps) {
         const Tag = styled.tag;
         output.push(
           <Tag key={key(styled.tag)}>
-            <InlineContent imageSources={imageSources} onLink={onLink} text={match[1] ?? ''} />
+            <InlineContent
+              imageSources={imageSources}
+              onLink={onLink}
+              onTag={onTag}
+              text={match[1] ?? ''}
+            />
           </Tag>
         );
         cursor += match[0].length;
@@ -200,9 +261,11 @@ function Table({
   table,
   imageSources,
   onLink,
+  onTag,
 }: {
   imageSources: ReadonlyMap<string, string>;
   onLink: MarkdownInlineProps['onLink'];
+  onTag?: MarkdownInlineProps['onTag'];
   table: Extract<MarkdownNode, { type: 'table' }>['table'];
 }) {
   return (
@@ -212,7 +275,12 @@ function Table({
           <tr>
             {table.headers.map((header, index) => (
               <th key={`header-${header}`} style={alignmentStyle(table.alignments[index] ?? null)}>
-                <InlineContent imageSources={imageSources} onLink={onLink} text={header} />
+                <InlineContent
+                  imageSources={imageSources}
+                  onLink={onLink}
+                  onTag={onTag}
+                  text={header}
+                />
               </th>
             ))}
           </tr>
@@ -225,7 +293,12 @@ function Table({
                   key={`cell-${row.join('|')}-${cell}`}
                   style={alignmentStyle(table.alignments[cellIndex] ?? null)}
                 >
-                  <InlineContent imageSources={imageSources} onLink={onLink} text={cell} />
+                  <InlineContent
+                    imageSources={imageSources}
+                    onLink={onLink}
+                    onTag={onTag}
+                    text={cell}
+                  />
                 </td>
               ))}
             </tr>
@@ -241,6 +314,7 @@ function renderNode(
   node: MarkdownNode,
   index: number,
   onLink: MarkdownInlineProps['onLink'],
+  onTag: MarkdownInlineProps['onTag'],
   imageSources: ReadonlyMap<string, string>,
   blockIdForContent: (content: string) => string | undefined,
   focusedBlockId?: string
@@ -252,7 +326,12 @@ function renderNode(
       const Heading = `h${node.level}` as 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6';
       return (
         <Heading key={`heading-${index}`}>
-          <InlineContent imageSources={imageSources} onLink={onLink} text={node.text} />
+          <InlineContent
+            imageSources={imageSources}
+            onLink={onLink}
+            onTag={onTag}
+            text={node.text}
+          />
         </Heading>
       );
     }
@@ -262,6 +341,7 @@ function renderNode(
           imageSources={imageSources}
           key={`table-${index}`}
           onLink={onLink}
+          onTag={onTag}
           table={node.table}
         />
       );
@@ -276,7 +356,12 @@ function renderNode(
         <blockquote key={`quote-${index}`}>
           {node.lines.map((line) => (
             <p key={`quote-${line}`}>
-              <InlineContent imageSources={imageSources} onLink={onLink} text={line} />
+              <InlineContent
+                imageSources={imageSources}
+                onLink={onLink}
+                onTag={onTag}
+                text={line}
+              />
             </p>
           ))}
         </blockquote>
@@ -300,7 +385,12 @@ function renderNode(
           </span>
           {node.state && <span className={`task-state task-${node.state}`}>{node.state}</span>}
           <span>
-            <InlineContent imageSources={imageSources} onLink={onLink} text={node.text} />
+            <InlineContent
+              imageSources={imageSources}
+              onLink={onLink}
+              onTag={onTag}
+              text={node.text}
+            />
           </span>
         </div>
       );
@@ -318,7 +408,12 @@ function renderNode(
         >
           <span className='ordered-marker'>{node.marker}</span>
           <span>
-            <InlineContent imageSources={imageSources} onLink={onLink} text={node.text} />
+            <InlineContent
+              imageSources={imageSources}
+              onLink={onLink}
+              onTag={onTag}
+              text={node.text}
+            />
           </span>
         </div>
       );
@@ -326,7 +421,12 @@ function renderNode(
     case 'paragraph':
       return (
         <p className='page-paragraph' key={`paragraph-${index}`}>
-          <InlineContent imageSources={imageSources} onLink={onLink} text={node.text} />
+          <InlineContent
+            imageSources={imageSources}
+            onLink={onLink}
+            onTag={onTag}
+            text={node.text}
+          />
         </p>
       );
   }
@@ -335,6 +435,7 @@ function renderNode(
 export function MarkdownBody({
   markdown,
   onLink,
+  onTag,
   pagePath = 'page',
   pageTitle = pagePath,
   root,
@@ -342,6 +443,7 @@ export function MarkdownBody({
 }: {
   markdown: string;
   onLink: (target: string) => void;
+  onTag?: (tag: string) => void;
   pagePath?: string;
   pageTitle?: string;
   root?: FileSystemDirectoryHandle;
@@ -431,7 +533,7 @@ export function MarkdownBody({
   return (
     <div className='page-body'>
       {nodes.map((node, index) =>
-        renderNode(node, index, onLink, imageSources, blockIdForContent, focusedBlockId)
+        renderNode(node, index, onLink, onTag, imageSources, blockIdForContent, focusedBlockId)
       )}
     </div>
   );

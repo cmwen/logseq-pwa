@@ -139,7 +139,14 @@
 .outliner-mobile-toolbar button:disabled { cursor: default; opacity: .28; }
 
 .outliner-mobile-toolbar {
-  display: none;
+  align-items: center;
+  border-top: 1px solid var(--outliner-line);
+  display: flex;
+  gap: 1px;
+  margin-top: 18px;
+  overflow-x: auto;
+  padding-top: 11px;
+  scrollbar-width: thin;
 }
 
 .outliner-toolbar-group {
@@ -155,6 +162,31 @@
   border-left: 1px solid var(--outliner-line);
   margin-left: 2px;
   padding-left: 7px;
+}
+
+.outliner-date-picker {
+  align-items: center;
+  color: var(--outliner-muted);
+  display: inline-flex;
+  font-size: 10px;
+  gap: 4px;
+  padding: 0 3px;
+}
+
+.outliner-date-picker-label {
+  left: -9999px;
+  position: absolute;
+}
+
+.outliner-date-picker input {
+  background: transparent;
+  border: 1px solid var(--outliner-line);
+  border-radius: 5px;
+  color: inherit;
+  font: inherit;
+  height: 30px;
+  min-width: 126px;
+  padding: 0 5px;
 }
 
 .outliner-readonly .outliner-row { grid-template-columns: 27px minmax(0, 1fr); }
@@ -181,6 +213,7 @@
     gap: 1px;
     justify-content: flex-start;
     left: 10px;
+    margin-top: 0;
     max-width: calc(100vw - 20px);
     overflow-x: auto;
     overscroll-behavior-x: contain;
@@ -200,5 +233,48 @@
     min-width: 44px;
     padding: 0 7px;
     touch-action: manipulation;
+  }
+  .outliner-date-picker input { height: 44px; min-width: 142px; }
+}
+
+/* Keep the block editor readable when the document theme is dark. */
+html[data-theme='dark'] .outliner {
+  --outliner-accent: #e27b5c;
+  --outliner-line: #354238;
+  --outliner-muted: #9eaa9f;
+}
+
+html[data-theme='dark'] .outliner-focus-breadcrumb {
+  background: rgba(226, 123, 92, .13);
+  border-color: rgba(226, 123, 92, .3);
+  color: #adb8ad;
+}
+
+html[data-theme='dark'] .outliner-row:hover,
+html[data-theme='dark'] .outliner-row-active { background: rgba(154, 169, 156, .11); }
+html[data-theme='dark'] .outliner-input:focus { background: rgba(35, 47, 39, .92); }
+html[data-theme='dark'] .outliner-handle:hover,
+html[data-theme='dark'] .outliner-menu button:hover,
+html[data-theme='dark'] .outliner-mobile-toolbar button:hover {
+  background: rgba(154, 169, 156, .15);
+  color: #e7ebe4;
+}
+html[data-theme='dark'] .outliner-menu {
+  background: #1a211c;
+  border-color: #3b483e;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .4);
+}
+html[data-theme='dark'] .outliner-date-picker input {
+  background: #121a15;
+  border-color: #435047;
+  color: #e7ebe4;
+  color-scheme: dark;
+}
+
+@media (max-width: 720px) {
+  html[data-theme='dark'] .outliner-mobile-toolbar {
+    background: rgba(26, 33, 28, .95);
+    border-color: #3b483e;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, .42);
   }
 }

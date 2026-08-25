@@ -27,6 +27,26 @@ export interface TextEditResult {
   selectionEnd: number;
 }
 
+/** Inserts a Logseq date page reference, replacing the current selection. */
+export function applyDateReference(
+  content: string,
+  selection: TextSelection,
+  date: string
+): TextEditResult {
+  if (!isDateValue(date)) {
+    const start = clamp(selection.start, 0, content.length);
+    const end = clamp(selection.end, start, content.length);
+    return result(content, { start, end });
+  }
+
+  const start = clamp(selection.start, 0, content.length);
+  const end = clamp(selection.end, start, content.length);
+  const reference = `[[${date}]]`;
+  const next = `${content.slice(0, start)}${reference}${content.slice(end)}`;
+  const caret = start + reference.length;
+  return result(next, { start: caret, end: caret });
+}
+
 const wrappers: Partial<Record<EditorCommand, readonly [string, string]>> = {
   'page-link': ['[[', ']]'],
   'block-reference': ['((', '))'],
@@ -127,6 +147,17 @@ function result(content: string, selection: TextSelection): TextEditResult {
     selectionStart: selection.start,
     selectionEnd: selection.end,
   };
+}
+
+function isDateValue(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(value)) return false;
+  const [year, month, day] = value.split('-').map(Number);
+  const candidate = new Date(Date.UTC(year, month - 1, day));
+  return (
+    candidate.getUTCFullYear() === year &&
+    candidate.getUTCMonth() === month - 1 &&
+    candidate.getUTCDate() === day
+  );
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {

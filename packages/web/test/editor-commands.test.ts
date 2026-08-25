@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyEditorCommand } from '../src/client/editor-commands.js';
+import { applyDateReference, applyEditorCommand } from '../src/client/editor-commands.js';
 
 const edit = (
   command: Parameters<typeof applyEditorCommand>[0],
@@ -9,6 +9,26 @@ const edit = (
 ) => applyEditorCommand(command, content, { start, end });
 
 describe('editor commands', () => {
+  it('inserts a valid date as a Logseq page reference', () => {
+    expect(applyDateReference('Review ', { start: 7, end: 7 }, '2026-08-25')).toMatchObject({
+      content: 'Review [[2026-08-25]]',
+      selectionStart: 21,
+      selectionEnd: 21,
+    });
+    expect(applyDateReference('old text', { start: 0, end: 8 }, '2024-02-29').content).toBe(
+      '[[2024-02-29]]'
+    );
+  });
+
+  it('leaves the edit untouched for malformed or impossible dates', () => {
+    expect(applyDateReference('text', { start: 2, end: 2 }, '2026-02-30')).toMatchObject({
+      content: 'text',
+      selectionStart: 2,
+      selectionEnd: 2,
+    });
+    expect(applyDateReference('text', { start: 0, end: 1 }, 'tomorrow').content).toBe('text');
+  });
+
   it('wraps selected and empty ranges with Logseq syntax', () => {
     expect(edit('page-link', 'Read Projects', 5, 13)).toMatchObject({
       content: 'Read [[Projects]]',

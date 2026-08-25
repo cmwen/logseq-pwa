@@ -5,7 +5,7 @@ import type { BlockSearchResult } from './block-index.js';
 export const GRAPH_CACHE_SCHEMA_VERSION = 2;
 
 /** Current version of the page index produced by Loam. */
-export const GRAPH_CACHE_INDEXER_VERSION = 2;
+export const GRAPH_CACHE_INDEXER_VERSION = 3;
 
 const DEFAULT_DATABASE_NAME = 'loam-graph-cache';
 const GRAPHS_STORE = 'graphs';
