@@ -1,7 +1,12 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { markdownFromClipboard } from './clipboard-markdown.js';
-import { applyDateReference, applyEditorCommand, type EditorCommand } from './editor-commands.js';
+import {
+  applyDateReference,
+  applyEditorCommand,
+  type EditorCommand,
+  isCaretOnBlockBoundaryLine,
+} from './editor-commands.js';
 import {
   addSiblingBlock,
   type BlockMutation,
@@ -13,6 +18,7 @@ import {
   createBlock,
   deleteBlock,
   dropBlock,
+  extendKeyboardBlockSelection,
   findBlock,
   focusBlockTree,
   indentBlock,
@@ -23,9 +29,11 @@ import {
   outdentBlock,
   outdentBlocks,
   pasteMarkdownBlocks,
+  selectVisibleBlockRange,
   splitBlock,
   toggleBlockCollapsed,
   updateBlockContent,
+  visibleBlockIds,
 } from './outliner-model.js';
 import './outliner.css';
 
@@ -80,6 +88,7 @@ export function OutlinerEditor({
   const [menuId, setMenuId] = useState<string>();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectionAnchorId, setSelectionAnchorId] = useState<string>();
+  const [keyboardSelectionActive, setKeyboardSelectionActive] = useState(false);
   const [focusRequest, setFocusRequest] = useState<FocusRequest>();
   const [dateValue, setDateValue] = useState(() => formatDateInputValue(new Date()));
   const inputs = useRef(new Map<string, HTMLTextAreaElement>());
@@ -103,6 +112,7 @@ export function OutlinerEditor({
     setActiveId(next[0]?.id);
     setSelectedIds(new Set());
     setSelectionAnchorId(undefined);
+    setKeyboardSelectionActive(false);
   }, [controlledBlocks]);
 
   useEffect(() => {
@@ -151,8 +161,12 @@ export function OutlinerEditor({
       mutation.focusId ? { id: mutation.focusId, caret: mutation.caret } : undefined
     );
     setSelectedIds((current) => {
-      const available = new Set(flattenBlockIds(mutation.blocks));
+      const available = new Set(flattenAllBlockIds(mutation.blocks));
       return new Set([...current].filter((id) => available.has(id)));
+    });
+    setSelectionAnchorId((current) => {
+      if (!current) return undefined;
+      return flattenAllBlockIds(mutation.blocks).includes(current) ? current : undefined;
     });
     if (focusedBlockId && !findBlock(mutation.blocks, focusedBlockId)) onExitFocus?.();
   };
@@ -180,6 +194,7 @@ export function OutlinerEditor({
   };
 
   const handleInput = (id: string, content: string) => {
+    setKeyboardSelectionActive(false);
     const next = updateBlockContent(currentBlocks.current, id, content);
     commit(next);
   };
@@ -266,6 +281,12 @@ export function OutlinerEditor({
 
     if (event.key === 'Escape') {
       event.preventDefault();
+      if (selectedIds.size > 0) {
+        setSelectedIds(new Set());
+        setSelectionAnchorId(undefined);
+        setKeyboardSelectionActive(false);
+        return;
+      }
       input.blur();
       setActiveId(undefined);
       setMenuId(undefined);
@@ -285,6 +306,22 @@ export function OutlinerEditor({
     if (command && event.shiftKey && event.key.toLocaleLowerCase() === 'k') {
       event.preventDefault();
       applyTextCommand('page-link', block.id);
+      return;
+    }
+    if (command && event.shiftKey && event.key.toLocaleLowerCase() === 'a') {
+      event.preventDefault();
+      const ids = visibleBlockIds(visibleBlocks);
+      const first = ids[0];
+      const last = ids.at(-1);
+      if (!first || !last) return;
+      setSelectedIds(new Set(ids));
+      setSelectionAnchorId(first);
+      setKeyboardSelectionActive(true);
+      setActiveId(last);
+      setFocusRequest({
+        id: last,
+        caret: findBlock(currentBlocks.current, last)?.content.length ?? 0,
+      });
       return;
     }
     if (command && event.key === 'Enter') {
@@ -310,6 +347,45 @@ export function OutlinerEditor({
       event.preventDefault();
       applyMutation(moveBlock(currentBlocks.current, block.id, event.key === 'ArrowUp' ? -1 : 1));
       return;
+    }
+    // Shift+Arrow selects whole visible blocks only at the textarea boundary.
+    // Inside a multiline block, the browser keeps its normal text-selection
+    // behavior (including line-wise Shift+Arrow movement).
+    if (
+      !command &&
+      !event.altKey &&
+      event.shiftKey &&
+      (event.key === 'ArrowUp' || event.key === 'ArrowDown') &&
+      input.selectionStart === input.selectionEnd &&
+      (isCaretOnBlockBoundaryLine(
+        input.value,
+        input.selectionStart,
+        event.key === 'ArrowUp' ? -1 : 1
+      ) ||
+        (keyboardSelectionActive &&
+          selectedIds.size > 0 &&
+          selectionAnchorId &&
+          activeId === block.id))
+    ) {
+      const selection = extendKeyboardBlockSelection(
+        visibleBlocks,
+        selectionAnchorId,
+        block.id,
+        event.key === 'ArrowUp' ? -1 : 1
+      );
+      if (selection) {
+        event.preventDefault();
+        setSelectedIds(new Set(selection.ids));
+        setSelectionAnchorId(selection.anchorId);
+        setKeyboardSelectionActive(true);
+        setActiveId(selection.focusId);
+        const focusBlock = findBlock(currentBlocks.current, selection.focusId);
+        setFocusRequest({
+          id: selection.focusId,
+          caret: event.key === 'ArrowUp' ? 0 : (focusBlock?.content.length ?? 0),
+        });
+        return;
+      }
     }
     if (
       !command &&
@@ -423,10 +499,15 @@ export function OutlinerEditor({
 
   const handleSelect = (id: string, range: boolean) => {
     setActiveId(id);
-    setSelectedIds((current) =>
-      nextSelectedIds(current, id, range, selectionAnchorId, visibleBlocks)
-    );
-    setSelectionAnchorId(id);
+    setKeyboardSelectionActive(false);
+    const rangeAnchor =
+      range &&
+      selectionAnchorId &&
+      selectVisibleBlockRange(visibleBlocks, selectionAnchorId, id).length
+        ? selectionAnchorId
+        : id;
+    setSelectedIds((current) => nextSelectedIds(current, id, range, rangeAnchor, visibleBlocks));
+    setSelectionAnchorId(rangeAnchor);
   };
 
   const handleDrop = (
@@ -459,6 +540,17 @@ export function OutlinerEditor({
       aria-label={ariaLabel}
       className={`outliner ${readOnly ? 'outliner-readonly' : ''} ${className}`.trim()}
     >
+      {!readOnly && (
+        <div
+          aria-live='polite'
+          className='outliner-selection-status'
+          id='outliner-selection-status'
+        >
+          {selectedIds.size > 0
+            ? `${selectedIds.size} block${selectedIds.size === 1 ? '' : 's'} selected. Use Tab to indent or Shift+Tab to outdent.`
+            : ''}
+        </div>
+      )}
       <div className='outliner-tree'>
         {focusedBlockId && (
           <div className='outliner-focus-breadcrumb'>
@@ -706,6 +798,8 @@ function BlockTree({
               </button>
               <textarea
                 aria-label='Block content'
+                aria-describedby='outliner-selection-status'
+                aria-keyshortcuts='Shift+ArrowUp Shift+ArrowDown Tab Shift+Tab Meta+Shift+A Control+Shift+A'
                 className='outliner-input'
                 onFocus={() => onActivate(block.id)}
                 onInput={(event) => {
@@ -847,12 +941,12 @@ function adjacentVisibleBlock(
   return index >= 0 ? visible[index + direction] : undefined;
 }
 
-function flattenBlockIds(blocks: readonly OutlinerBlock[]): string[] {
+function flattenAllBlockIds(blocks: readonly OutlinerBlock[]): string[] {
   const ids: string[] = [];
   const visit = (nodes: readonly OutlinerBlock[]) => {
     for (const node of nodes) {
       ids.push(node.id);
-      if (!node.collapsed) visit(node.children);
+      visit(node.children);
     }
   };
   visit(blocks);
@@ -868,12 +962,9 @@ function nextSelectedIds(
 ): Set<string> {
   const next = new Set(current);
   if (range && anchorId) {
-    const visibleIds = flattenBlockIds(visibleBlocks);
-    const start = visibleIds.indexOf(anchorId);
-    const end = visibleIds.indexOf(id);
-    if (start >= 0 && end >= 0) {
-      const [from, to] = start < end ? [start, end] : [end, start];
-      for (const selectedId of visibleIds.slice(from, to + 1)) next.add(selectedId);
+    const selectedRange = selectVisibleBlockRange(visibleBlocks, anchorId, id);
+    if (selectedRange.length) {
+      for (const selectedId of selectedRange) next.add(selectedId);
       return next;
     }
   }

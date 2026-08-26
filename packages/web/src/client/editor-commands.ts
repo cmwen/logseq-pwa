@@ -27,6 +27,22 @@ export interface TextEditResult {
   selectionEnd: number;
 }
 
+/**
+ * Returns whether a caret is on the outer logical line of a block. Single-line
+ * blocks are both their first and last line, while multiline blocks retain
+ * native Shift+Arrow text selection until the relevant boundary line.
+ */
+export function isCaretOnBlockBoundaryLine(
+  content: string,
+  caret: number,
+  direction: -1 | 1
+): boolean {
+  const offset = clamp(caret, 0, content.length);
+  return direction === -1
+    ? !content.slice(0, offset).includes('\n')
+    : !content.slice(offset).includes('\n');
+}
+
 /** Inserts a Logseq date page reference, replacing the current selection. */
 export function applyDateReference(
   content: string,

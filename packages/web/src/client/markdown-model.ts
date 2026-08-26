@@ -19,6 +19,12 @@ export type MarkdownNode =
   | { text: string; type: 'paragraph' }
   | { table: MarkdownTable; type: 'table' };
 
+export interface MarkdownNodeTree {
+  children: MarkdownNodeTree[];
+  index: number;
+  node: MarkdownNode;
+}
+
 function indentationWidth(value: string): number {
   return value.replaceAll('\t', '  ').length;
 }
@@ -199,4 +205,37 @@ export function parseMarkdownDocument(markdown: string): MarkdownNode[] {
   }
 
   return nodes;
+}
+
+function isListNode(
+  node: MarkdownNode
+): node is Extract<MarkdownNode, { type: 'bullet' | 'ordered' }> {
+  return node.type === 'bullet' || node.type === 'ordered';
+}
+
+/** Groups contiguous nested list items for the read-mode block disclosure UI. */
+export function buildMarkdownNodeTree(nodes: readonly MarkdownNode[]): MarkdownNodeTree[] {
+  const roots: MarkdownNodeTree[] = [];
+  const stack: Array<{ indentation: number; tree: MarkdownNodeTree }> = [];
+
+  for (const [index, node] of nodes.entries()) {
+    const tree: MarkdownNodeTree = { children: [], index, node };
+    if (!isListNode(node)) {
+      roots.push(tree);
+      stack.length = 0;
+      continue;
+    }
+
+    while (true) {
+      const top = stack.at(-1);
+      if (!top || top.indentation < node.indentation) break;
+      stack.pop();
+    }
+    const parent = stack.at(-1)?.tree;
+    if (parent) parent.children.push(tree);
+    else roots.push(tree);
+    stack.push({ indentation: node.indentation, tree });
+  }
+
+  return roots;
 }

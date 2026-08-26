@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { applyDateReference, applyEditorCommand } from '../src/client/editor-commands.js';
+import {
+  applyDateReference,
+  applyEditorCommand,
+  isCaretOnBlockBoundaryLine,
+} from '../src/client/editor-commands.js';
 
 const edit = (
   command: Parameters<typeof applyEditorCommand>[0],
@@ -9,6 +13,15 @@ const edit = (
 ) => applyEditorCommand(command, content, { start, end });
 
 describe('editor commands', () => {
+  it('detects outer logical lines for whole-block keyboard selection', () => {
+    expect(isCaretOnBlockBoundaryLine('single line', 4, -1)).toBe(true);
+    expect(isCaretOnBlockBoundaryLine('single line', 4, 1)).toBe(true);
+    expect(isCaretOnBlockBoundaryLine('first\nmiddle\nlast', 3, -1)).toBe(true);
+    expect(isCaretOnBlockBoundaryLine('first\nmiddle\nlast', 8, -1)).toBe(false);
+    expect(isCaretOnBlockBoundaryLine('first\nmiddle\nlast', 8, 1)).toBe(false);
+    expect(isCaretOnBlockBoundaryLine('first\nmiddle\nlast', 15, 1)).toBe(true);
+  });
+
   it('inserts a valid date as a Logseq page reference', () => {
     expect(applyDateReference('Review ', { start: 7, end: 7 }, '2026-08-25')).toMatchObject({
       content: 'Review [[2026-08-25]]',

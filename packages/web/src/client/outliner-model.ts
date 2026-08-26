@@ -26,6 +26,12 @@ import type { TextSelection } from './editor-commands.js';
 
 export type OutlinerBlock = BlockNode;
 
+export interface KeyboardBlockSelection {
+  ids: string[];
+  anchorId: string;
+  focusId: string;
+}
+
 export interface BlockMutation {
   blocks: OutlinerBlock[];
   focusId?: string;
@@ -287,6 +293,63 @@ export function findBlock(blocks: readonly OutlinerBlock[], id: string): Outline
     if (child) return child;
   }
   return undefined;
+}
+
+/**
+ * Returns the rendered/document order of blocks, skipping descendants hidden
+ * by a collapsed parent. The parent itself remains selectable.
+ */
+export function visibleBlockIds(blocks: readonly OutlinerBlock[]): string[] {
+  const ids: string[] = [];
+  const visit = (nodes: readonly OutlinerBlock[]) => {
+    for (const node of nodes) {
+      ids.push(node.id);
+      if (!node.collapsed) visit(node.children);
+    }
+  };
+  visit(blocks);
+  return ids;
+}
+
+/** Selects the inclusive visible range between two block IDs. */
+export function selectVisibleBlockRange(
+  blocks: readonly OutlinerBlock[],
+  anchorId: string,
+  focusId: string
+): string[] {
+  const ids = visibleBlockIds(blocks);
+  const anchor = ids.indexOf(anchorId);
+  const focus = ids.indexOf(focusId);
+  if (anchor < 0 || focus < 0) return [];
+  const [from, to] = anchor <= focus ? [anchor, focus] : [focus, anchor];
+  return ids.slice(from, to + 1);
+}
+
+/**
+ * Extends a keyboard block selection by one visible block. The anchor remains
+ * fixed while the focus endpoint moves, so reversing direction contracts the
+ * range naturally. An anchor that became hidden or was removed is reset to the
+ * active endpoint, which keeps selection state valid after collapse/edits.
+ */
+export function extendKeyboardBlockSelection(
+  blocks: readonly OutlinerBlock[],
+  anchorId: string | undefined,
+  focusId: string,
+  direction: -1 | 1
+): KeyboardBlockSelection | undefined {
+  const ids = visibleBlockIds(blocks);
+  const focusIndex = ids.indexOf(focusId);
+  if (focusIndex < 0) return undefined;
+  const nextIndex = Math.max(0, Math.min(ids.length - 1, focusIndex + direction));
+  const nextFocusId = ids[nextIndex];
+  const nextAnchorId = anchorId && ids.includes(anchorId) ? anchorId : focusId;
+  const selected = selectVisibleBlockRange(blocks, nextAnchorId, nextFocusId);
+  if (!selected.length) return undefined;
+
+  // There is no adjacent block at the document edge. Returning undefined lets
+  // the textarea/browser handle the key without moving the caret unexpectedly.
+  if (nextFocusId === focusId) return undefined;
+  return { ids: selected, anchorId: nextAnchorId, focusId: nextFocusId };
 }
 
 /** Returns one block as a focused tree while keeping every descendant. */

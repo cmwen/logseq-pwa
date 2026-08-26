@@ -291,9 +291,9 @@ This is not required for the earliest build but should be supported by the under
 
 ## 8.9 Block selection
 
-The editor should eventually support multi-block selection.
+The editor supports contiguous multi-block selection by keyboard or pointer.
 
-For MVP, basic selection is sufficient if the architecture does not prevent future multi-block actions.
+Selected blocks may be indented or outdented together while carrying their descendants exactly once.
 
 ## 8.10 Undo and redo
 
@@ -368,12 +368,15 @@ Required shortcuts:
 
 ```text
 Enter             New/split block
+Shift + ↑ / ↓     Select/resize a visible block range
 Tab               Indent
 Shift + Tab       Outdent
 Backspace         Merge/remove where appropriate
 Cmd/Ctrl + Z      Undo
 Cmd/Ctrl + Shift+Z Redo
+Cmd/Ctrl + Shift+A Select all visible blocks
 Cmd/Ctrl + K      Global search
+Escape            Clear block selection, then leave the active block
 ```
 
 Future shortcuts may include:

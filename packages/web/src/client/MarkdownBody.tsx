@@ -4,8 +4,10 @@ import { useEffect, useMemo, useState } from 'preact/hooks';
 import { parseDatePrimitive } from './graph-model.js';
 import { resolveLocalAttachment } from './logseq.js';
 import {
+  buildMarkdownNodeTree,
   type MarkdownAlignment,
   type MarkdownNode,
+  type MarkdownNodeTree,
   parseMarkdownDocument,
 } from './markdown-model.js';
 import { blockDomId } from './navigation-model.js';
@@ -263,6 +265,50 @@ function alignmentStyle(alignment: MarkdownAlignment): { textAlign?: MarkdownAli
   return alignment ? { textAlign: alignment } : {};
 }
 
+function isListNode(
+  node: MarkdownNode
+): node is Extract<MarkdownNode, { type: 'bullet' | 'ordered' }> {
+  return node.type === 'bullet' || node.type === 'ordered';
+}
+
+type ListMarkdownNode = Extract<MarkdownNode, { type: 'bullet' | 'ordered' }>;
+
+function blockContentForNode(node: ListMarkdownNode): string {
+  if (node.type === 'ordered') return `${node.marker} ${node.text}`;
+  return node.state ? `${node.state.toUpperCase()} ${node.text}` : node.text;
+}
+
+function createReadBlockIds(
+  nodes: readonly MarkdownNode[],
+  indexedBlocks: readonly { id: string; content: string }[],
+  blockIdsByContent: ReadonlyMap<string, string[]>,
+  safeOutlinerDocument: boolean,
+  pagePath: string
+): Map<number, string> {
+  const ids = new Map<number, string>();
+  let safeBlockCursor = 0;
+  const usedBlockContents = new Map<string, number>();
+  for (const [index, node] of nodes.entries()) {
+    if (!isListNode(node)) continue;
+    const content = blockContentForNode(node);
+    if (safeOutlinerDocument) {
+      const id = indexedBlocks[safeBlockCursor]?.id;
+      safeBlockCursor += 1;
+      if (id) {
+        ids.set(index, id);
+        continue;
+      }
+    }
+    const occurrence = usedBlockContents.get(content) ?? 0;
+    usedBlockContents.set(content, occurrence + 1);
+    ids.set(
+      index,
+      blockIdsByContent.get(content)?.[occurrence] ?? stableBlockId(pagePath, content, occurrence)
+    );
+  }
+  return ids;
+}
+
 function Table({
   table,
   imageSources,
@@ -322,8 +368,11 @@ function renderNode(
   onLink: MarkdownInlineProps['onLink'],
   onTag: MarkdownInlineProps['onTag'],
   imageSources: ReadonlyMap<string, string>,
-  blockIdForContent: (content: string) => string | undefined,
-  focusedBlockId?: string
+  blockId: string | undefined,
+  focusedBlockId?: string,
+  hasChildren = false,
+  collapsed = false,
+  onToggle?: () => void
 ) {
   switch (node.type) {
     case 'blank':
@@ -375,8 +424,6 @@ function renderNode(
     case 'hr':
       return <hr key={`hr-${index}`} />;
     case 'bullet': {
-      const content = node.state ? `${node.state.toUpperCase()} ${node.text}` : node.text;
-      const blockId = blockIdForContent(content);
       const heading = node.state ? null : node.text.match(/^(#{1,6})\s+(.*)$/u);
       const ordered = node.state ? null : node.text.match(/^(\d+[.)])\s+(.*)$/u);
       const Heading = heading
@@ -391,6 +438,19 @@ function renderNode(
           style={{ paddingLeft: `${node.indentation * 4}px` }}
           tabIndex={-1}
         >
+          {hasChildren && onToggle && (
+            <button
+              aria-controls={blockId ? `${blockDomId(blockId)}-children` : undefined}
+              aria-expanded={!collapsed}
+              aria-label={collapsed ? 'Expand nested blocks' : 'Collapse nested blocks'}
+              className='page-block-toggle'
+              onClick={onToggle}
+              title={collapsed ? 'Expand nested blocks' : 'Collapse nested blocks'}
+              type='button'
+            >
+              {collapsed ? '▸' : '▾'}
+            </button>
+          )}
           {ordered ? (
             <span className='ordered-marker'>{ordered[1]}</span>
           ) : (
@@ -422,7 +482,6 @@ function renderNode(
       );
     }
     case 'ordered': {
-      const blockId = blockIdForContent(`${node.marker} ${node.text}`);
       return (
         <div
           className={`page-block ordered-block ${blockId === focusedBlockId ? 'page-block-focused' : ''}`.trim()}
@@ -432,6 +491,19 @@ function renderNode(
           style={{ paddingLeft: `${node.indentation * 4}px` }}
           tabIndex={-1}
         >
+          {hasChildren && onToggle && (
+            <button
+              aria-controls={blockId ? `${blockDomId(blockId)}-children` : undefined}
+              aria-expanded={!collapsed}
+              aria-label={collapsed ? 'Expand nested blocks' : 'Collapse nested blocks'}
+              className='page-block-toggle'
+              onClick={onToggle}
+              title={collapsed ? 'Expand nested blocks' : 'Collapse nested blocks'}
+              type='button'
+            >
+              {collapsed ? '▸' : '▾'}
+            </button>
+          )}
           <span className='ordered-marker'>{node.marker}</span>
           <span>
             <InlineContent
@@ -476,7 +548,9 @@ export function MarkdownBody({
   focusedBlockId?: string;
 }) {
   const nodes = useMemo(() => parseMarkdownDocument(markdown), [markdown]);
+  const nodeTree = useMemo(() => buildMarkdownNodeTree(nodes), [nodes]);
   const [imageSources, setImageSources] = useState<Map<string, string>>(() => new Map());
+  const [collapsedBlockIds, setCollapsedBlockIds] = useState<Set<string>>(() => new Set());
   const indexedBlocks = useMemo(
     () => flattenBlockTree(parseMarkdownBlocks(markdown, pagePath, pageTitle)),
     [markdown, pagePath, pageTitle]
@@ -491,20 +565,44 @@ export function MarkdownBody({
     return ids;
   }, [indexedBlocks]);
   const safeOutlinerDocument = useMemo(() => assessOutlinerSafety(markdown).safe, [markdown]);
-  let safeBlockCursor = 0;
-  const usedBlockContents = new Map<string, number>();
-  const blockIdForContent = (content: string) => {
-    if (safeOutlinerDocument) {
-      const id = indexedBlocks[safeBlockCursor]?.id;
-      safeBlockCursor += 1;
-      if (id) return id;
-    }
-    const occurrence = usedBlockContents.get(content) ?? 0;
-    usedBlockContents.set(content, occurrence + 1);
-    return (
-      blockIdsByContent.get(content)?.[occurrence] ?? stableBlockId(pagePath, content, occurrence)
-    );
+  const blockIdsByNodeIndex = useMemo(
+    () =>
+      createReadBlockIds(nodes, indexedBlocks, blockIdsByContent, safeOutlinerDocument, pagePath),
+    [blockIdsByContent, indexedBlocks, nodes, pagePath, safeOutlinerDocument]
+  );
+  const parentBlockIds = useMemo(() => {
+    const parents = new Map<string, string[]>();
+    const visit = (entries: readonly MarkdownNodeTree[], ancestors: readonly string[]) => {
+      for (const entry of entries) {
+        const blockId = blockIdsByNodeIndex.get(entry.index);
+        const nextAncestors = blockId ? [...ancestors, blockId] : [...ancestors];
+        if (blockId) parents.set(blockId, [...ancestors]);
+        visit(entry.children, nextAncestors);
+      }
+    };
+    visit(nodeTree, []);
+    return parents;
+  }, [blockIdsByNodeIndex, nodeTree]);
+
+  const toggleCollapsed = (blockId: string) => {
+    setCollapsedBlockIds((current) => {
+      const next = new Set(current);
+      if (next.has(blockId)) next.delete(blockId);
+      else next.add(blockId);
+      return next;
+    });
   };
+
+  useEffect(() => {
+    if (!focusedBlockId) return;
+    const ancestors = parentBlockIds.get(focusedBlockId);
+    if (!ancestors?.length) return;
+    setCollapsedBlockIds((current) => {
+      const next = new Set(current);
+      for (const ancestor of ancestors) next.delete(ancestor);
+      return next.size === current.size ? current : next;
+    });
+  }, [focusedBlockId, parentBlockIds]);
 
   useEffect(() => {
     let cancelled = false;
@@ -556,11 +654,36 @@ export function MarkdownBody({
     return () => window.clearTimeout(timer);
   }, [focusedBlockId, focusToken]);
 
-  return (
-    <div className='page-body'>
-      {nodes.map((node, index) =>
-        renderNode(node, index, onLink, onTag, imageSources, blockIdForContent, focusedBlockId)
-      )}
-    </div>
-  );
+  const renderTreeNode = (entry: MarkdownNodeTree): ComponentChildren => {
+    const blockId = blockIdsByNodeIndex.get(entry.index);
+    const hasChildren = isListNode(entry.node) && entry.children.length > 0;
+    const collapsed = hasChildren && blockId ? collapsedBlockIds.has(blockId) : false;
+    const rendered = renderNode(
+      entry.node,
+      entry.index,
+      onLink,
+      onTag,
+      imageSources,
+      blockId,
+      focusedBlockId,
+      hasChildren,
+      collapsed,
+      blockId ? () => toggleCollapsed(blockId) : undefined
+    );
+    if (!hasChildren || !blockId) return rendered;
+    return (
+      <div className='page-block-branch' key={`branch-${entry.index}`}>
+        {rendered}
+        <div
+          className='page-block-children'
+          hidden={collapsed}
+          id={`${blockDomId(blockId)}-children`}
+        >
+          {entry.children.map(renderTreeNode)}
+        </div>
+      </div>
+    );
+  };
+
+  return <div className='page-body'>{nodeTree.map(renderTreeNode)}</div>;
 }

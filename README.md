@@ -6,9 +6,10 @@ Loam is a small, journal-first block outliner for a local Markdown workspace. It
 
 - Open a Logseq graph folder with the browser File System Access API.
 - Recursively index markdown pages from the graph root, including `pages/` and `journals/`.
-- Read lightweight Logseq markdown with headings, bullets, tasks, tags, and `[[page links]]`.
+- Read lightweight Logseq markdown with headings, collapsible nested blocks, tasks, tags, and `[[page links]]`.
 - Follow page links and inspect backlinks in a two-way page map.
 - Edit nested blocks independently with split, merge, indent, outdent, reorder, collapse, undo, and redo.
+- Select contiguous blocks with Shift+Up/Down, indent or outdent them together, and select all visible blocks with Cmd/Ctrl+Shift+A.
 - Drag complete block subtrees, focus a block with its descendants, and jump to exact search/backlink matches.
 - Autosave portable nested Markdown back to the selected local folder with external-change protection and local draft recovery.
 - Route rich or unsupported Markdown to an exact-source fallback editor instead of rewriting its syntax.
@@ -21,7 +22,7 @@ Loam is a small, journal-first block outliner for a local Markdown workspace. It
 - Resolve local image attachments from the selected graph without uploading them.
 - Automate the same graph through the `loam` CLI, a loopback REST server, or the MCP server.
 
-Multi-block selection, queries, charts, graph visualization, collaboration, and cloud sync remain out of scope for this MVP.
+Queries, charts, graph visualization, collaboration, and cloud sync remain out of scope for this MVP.
 
 ## Local development
 

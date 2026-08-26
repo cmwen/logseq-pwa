@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseMarkdownDocument } from '../src/client/markdown-model.js';
+import { buildMarkdownNodeTree, parseMarkdownDocument } from '../src/client/markdown-model.js';
 
 describe('Markdown document model', () => {
   it('parses all Markdown heading levels', () => {
@@ -40,5 +40,18 @@ describe('Markdown document model', () => {
       { key: 'blank-4', type: 'blank' },
       { language: 'ts', type: 'code', value: 'const answer = 42;' },
     ]);
+  });
+
+  it('builds nested list items for read-mode disclosure', () => {
+    const nodes = parseMarkdownDocument('- Parent\n  - Child\n    1. Grandchild\n- Sibling');
+    const tree = buildMarkdownNodeTree(nodes);
+    expect(tree.map(({ node }) => node.type)).toEqual(['bullet', 'bullet']);
+    expect(tree[0]?.children[0]?.node).toMatchObject({ type: 'bullet', text: 'Child' });
+    expect(tree[0]?.children[0]?.children[0]?.node).toMatchObject({
+      marker: '1.',
+      text: 'Grandchild',
+      type: 'ordered',
+    });
+    expect(tree[0]?.children[0]?.children[0]?.index).toBe(2);
   });
 });

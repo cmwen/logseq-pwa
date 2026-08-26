@@ -4,6 +4,7 @@ import {
   assessOutlinerSafety,
   deleteBlock,
   dropBlock,
+  extendKeyboardBlockSelection,
   focusBlockTree,
   indentBlock,
   indentBlocks,
@@ -13,9 +14,11 @@ import {
   outdentBlocks,
   parseMarkdownBlocks,
   pasteMarkdownBlocks,
+  selectVisibleBlockRange,
   serializeMarkdownBlocks,
   splitBlock,
   toggleBlockCollapsed,
+  visibleBlockIds,
 } from '../src/client/outliner-model.js';
 
 describe('outliner model', () => {
@@ -93,6 +96,41 @@ describe('outliner model', () => {
     expect(serializeMarkdownBlocks(restored.blocks)).toBe(
       '- One\n- Two\n  - Existing child\n- Three\n- Four'
     );
+  });
+
+  it('selects visible blocks with a stable anchor and contracts when reversed', () => {
+    const blocks = parseMarkdownBlocks('- One\n- Parent\n  - Hidden child\n- Three\n- Four');
+    const ids = [blocks[0].id, blocks[1].id, blocks[1].children[0].id, blocks[2].id, blocks[3].id];
+    expect(visibleBlockIds(blocks)).toEqual(ids);
+    expect(selectVisibleBlockRange(blocks, ids[1], ids[3])).toEqual(ids.slice(1, 4));
+
+    const down = extendKeyboardBlockSelection(blocks, undefined, ids[1], 1);
+    expect(down).toEqual({ ids: ids.slice(1, 3), anchorId: ids[1], focusId: ids[2] });
+    const fartherDown = extendKeyboardBlockSelection(
+      blocks,
+      down?.anchorId,
+      down?.focusId ?? ids[2],
+      1
+    );
+    expect(fartherDown?.ids).toEqual(ids.slice(1, 4));
+    const up = extendKeyboardBlockSelection(
+      blocks,
+      fartherDown?.anchorId,
+      fartherDown?.focusId ?? ids[3],
+      -1
+    );
+    expect(up?.ids).toEqual(ids.slice(1, 3));
+  });
+
+  it('does not navigate into collapsed descendants or past visible boundaries', () => {
+    const blocks = parseMarkdownBlocks('- One\n- Parent\n  - Hidden child\n- Three');
+    const collapsed = toggleBlockCollapsed(blocks, blocks[1].id).blocks;
+    const ids = visibleBlockIds(collapsed);
+    expect(ids).toEqual([blocks[0].id, blocks[1].id, blocks[2].id]);
+    expect(extendKeyboardBlockSelection(collapsed, undefined, ids[0], -1)).toBeUndefined();
+    expect(
+      extendKeyboardBlockSelection(collapsed, undefined, ids[ids.length - 1], 1)
+    ).toBeUndefined();
   });
 
   it('does not move a selected descendant twice when its parent is selected', () => {
