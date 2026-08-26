@@ -30,10 +30,10 @@ describe('block Markdown', () => {
   it('parses nested Logseq bullets into ordered stable blocks and metadata', () => {
     const blocks = parseBlockMarkdown(
       [
-        '- Parent [[Project/Now/Recall]] #Research',
+        '- Parent [[Project/Now/Recall]] @Research',
         '  owner:: [[Chris]]',
         '  - Child',
-        '    - Grandchild #[[Deep Work]]',
+        '    - Grandchild @[[Deep Work]]',
         '- Second root',
       ].join('\n'),
       { idFactory: ids('parent', 'child', 'grandchild', 'second') }
@@ -164,12 +164,16 @@ describe('structured block operations', () => {
   });
 
   it('updates all derived metadata when block content changes', () => {
-    const initial = parseBlockMarkdown('- Old #Tag [[Page]]', { idFactory: ids('block') });
-    const updated = updateBlockContent(initial, 'block', 'New #Other [[Next]]\npriority:: high');
+    const initial = parseBlockMarkdown('- Old @Tag [[Page]]', { idFactory: ids('block') });
+    const updated = updateBlockContent(
+      initial,
+      'block',
+      'New @Other [[Next]] #legacy `@code` person@example.com https://example.com/@url\npriority:: high'
+    );
     const block = updated[0];
 
     expect(block?.properties).toEqual({ priority: 'high' });
     expect(block?.references).toEqual(['Next']);
-    expect(block?.tags).toEqual(['other']);
+    expect(block?.tags).toEqual(['other', 'legacy']);
   });
 });

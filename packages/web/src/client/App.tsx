@@ -9,6 +9,7 @@ import {
 } from '@loam/core';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { type BlockSearchResult, indexPageBlocks, searchPageBlocks } from './block-index.js';
+import { markdownFromClipboard } from './clipboard-markdown.js';
 import {
   buildPageHierarchy,
   buildTagSummaries,
@@ -84,7 +85,7 @@ const demoPages: PageInput[] = [
     title: todayTitle,
     path: journalPathForDate(),
     content:
-      '- Welcome to your daily journal\n  - Press Enter to create a block\n  - Press Tab to nest it beneath the previous thought\n- Explore [[Projects/Loam]] #today\n- Try the editor, then open your local graph when you are ready.\n',
+      '- Welcome to your daily journal\n  - Press Enter to create a block\n  - Press Tab to nest it beneath the previous thought\n- Explore [[Projects/Loam]] @today\n- Try the editor, then open your local graph when you are ready.\n',
   },
   {
     title: 'Welcome to Loam',
@@ -105,7 +106,7 @@ const demoPages: PageInput[] = [
 
 A page can mix Markdown primitives with connected blocks.
 
-- Make relationships visible #project
+- Make relationships visible @project
 - Next review: [[${todayTitle}]]
 `,
   },
@@ -113,7 +114,7 @@ A page can mix Markdown primitives with connected blocks.
     title: 'Reading list',
     path: 'pages/Reading_list.md',
     content:
-      '- [[The Art of Noticing]] — a reminder to look slowly\n- [[Designing for calm]] — notes on humane interfaces\n- #someday\n  - This page is linked from [[Working set]].\n  - Unknown links remain visible and ready to become pages.\n',
+      '- [[The Art of Noticing]] — a reminder to look slowly\n- [[Designing for calm]] — notes on humane interfaces\n- @someday\n  - This page is linked from [[Working set]].\n  - Unknown links remain visible and ready to become pages.\n',
   },
   {
     title: 'The Art of Noticing',
@@ -484,7 +485,7 @@ function TagsView({
       <div className='tags-heading'>
         <div>
           <p className='page-kicker'>TAG INDEX</p>
-          <h1>{selected ? `#${selected.tag}` : 'Tags'}</h1>
+          <h1>{selected ? `@${selected.tag}` : 'Tags'}</h1>
         </div>
         <div className='page-stats'>
           <span>
@@ -512,7 +513,7 @@ function TagsView({
                 onClick={() => onSelectTag(summary.tag)}
                 type='button'
               >
-                #{summary.tag} <small>{summary.pageCount}</small>
+                @{summary.tag} <small>{summary.pageCount}</small>
               </button>
             ))}
           </fieldset>
@@ -536,7 +537,7 @@ function TagsView({
           </fieldset>
         </>
       ) : (
-        <p className='relation-empty'>No hashtags yet. Add #tags to any block to see them here.</p>
+        <p className='relation-empty'>No tags yet. Add @tags to any block to see them here.</p>
       )}
     </article>
   );
@@ -1115,6 +1116,34 @@ export function App() {
     if (selectedPage) localStorage.setItem(`loam:draft:${selectedPage.path}`, content);
   };
 
+  const updateRawEditor = (content: string) => {
+    setDraft(content);
+    if (selectedPage) localStorage.setItem(`loam:draft:${selectedPage.path}`, content);
+  };
+
+  const pasteIntoRawEditor = (event: ClipboardEvent) => {
+    if (!event.clipboardData || !selectedPage) return;
+    const html = event.clipboardData.getData('text/html');
+    if (!html) return;
+    const markdown = markdownFromClipboard({
+      html,
+      text: event.clipboardData.getData('text/plain'),
+    });
+    if (!markdown) return;
+
+    event.preventDefault();
+    const input = event.currentTarget as HTMLTextAreaElement;
+    const start = input.selectionStart ?? draft.length;
+    const end = input.selectionEnd ?? start;
+    const content = `${draft.slice(0, start)}${markdown}${draft.slice(end)}`;
+    const caret = start + markdown.length;
+    updateRawEditor(content);
+    requestAnimationFrame(() => {
+      input.focus();
+      input.setSelectionRange(caret, caret);
+    });
+  };
+
   const handleCreatePage = async (event: Event) => {
     event.preventDefault();
     const title = newPageTitle.trim();
@@ -1188,7 +1217,7 @@ export function App() {
       },
     },
     {
-      description: 'Browse hashtags across every page',
+      description: 'Browse tags across every page',
       icon: 'tag' as const,
       id: 'tags',
       label: 'Open tags view',
@@ -1552,10 +1581,9 @@ export function App() {
                         aria-label={`Raw Markdown for ${selectedPage.title}`}
                         className='page-editor'
                         onInput={(event) => {
-                          const content = event.currentTarget.value;
-                          setDraft(content);
-                          localStorage.setItem(`loam:draft:${selectedPage.path}`, content);
+                          updateRawEditor(event.currentTarget.value);
                         }}
+                        onPaste={pasteIntoRawEditor}
                         value={draft}
                         spellcheck={false}
                       />
@@ -1667,7 +1695,7 @@ export function App() {
                         onClick={() => openTag(summary.tag)}
                         type='button'
                       >
-                        <span className='relation-bullet' />#{summary.tag}
+                        <span className='relation-bullet' />@{summary.tag}
                         <span className='relation-count'>{summary.pageCount}</span>
                       </button>
                     ))}

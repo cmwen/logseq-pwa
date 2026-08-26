@@ -14,19 +14,20 @@ import {
 describe('graph model', () => {
   it('extracts tags while ignoring markdown headings and frontmatter', () => {
     const markdown =
-      '---\ntags: ignored\n---\n# Heading\nBody #Project #[[Multi word]] #project `#inline`\n```\n#code\n```';
-    expect(extractHashtags(markdown)).toEqual(['project', 'multi word']);
+      '---\ntags: ignored\n---\n## Heading @Roadmap\nBody @Project @[[Multi word]] #project `@inline` person@example.com https://example.com/@url\n```\n@code\n```';
+    expect(extractHashtags(markdown)).toEqual(['roadmap', 'project', 'multi word']);
     expect(extractHashtagReferenceDetails(markdown).map((reference) => reference.raw)).toEqual([
-      '#Project',
-      '#[[Multi word]]',
+      '@Roadmap',
+      '@Project',
+      '@[[Multi word]]',
       '#project',
     ]);
   });
 
   it('summarizes occurrences and distinct page membership', () => {
     const pages = [
-      { title: 'Alpha', path: 'pages/alpha.md', content: '#one #one #Two' },
-      { title: 'Beta', path: 'pages/beta.md', content: '#two #three' },
+      { title: 'Alpha', path: 'pages/alpha.md', content: '@one @one @Two' },
+      { title: 'Beta', path: 'pages/beta.md', content: '#two @three' },
     ];
     expect(buildTagSummaries(pages)).toEqual([
       { count: 2, pageCount: 1, pagePaths: ['pages/alpha.md'], pages: ['Alpha'], tag: 'one' },

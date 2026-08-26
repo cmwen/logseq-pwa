@@ -48,7 +48,7 @@ The starter reader intentionally supports a small subset of Logseq markdown:
 - bullet blocks (`-` and `*`);
 - task markers (`TODO`, `DONE`, `LATER`);
 - page links and aliases;
-- simple `#tags`;
+- `@tags` and `@[[multi word tags]]` (legacy `#tags` remain readable);
 - bold text using `**text**`.
 
 The structured editor is enabled only when the page can round-trip through the block serializer. Other Markdown opens in an exact-source fallback editor so unsupported syntax is never silently rewritten.

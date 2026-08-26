@@ -479,9 +479,9 @@ Tags behave as lightweight references.
 Examples:
 
 ```text
-#ai
-#research
-#react
+@ai
+@research
+@react
 ```
 
 Search and matching must be case-insensitive.
@@ -493,7 +493,7 @@ For example:
 ```text
 AI
 ai
-#AI
+@AI
 ```
 
 may eventually resolve to the same canonical concept without rewriting original content automatically.

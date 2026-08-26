@@ -10,6 +10,7 @@ import {
   moveBlock,
   outdentBlock,
   parseMarkdownBlocks,
+  pasteMarkdownBlocks,
   serializeMarkdownBlocks,
   splitBlock,
 } from '../src/client/outliner-model.js';
@@ -95,5 +96,48 @@ describe('outliner model', () => {
     const focused = focusBlockTree(blocks, blocks[0].id);
     expect(serializeMarkdownBlocks(focused)).toBe('- One\n  - Child\n    - Grandchild');
     expect(focused[0]?.collapsed).toBe(false);
+  });
+
+  it('pastes multiline Markdown as editable sibling and nested blocks', () => {
+    const blocks = parseMarkdownBlocks('- Before  after\n- Existing');
+    const pasted = pasteMarkdownBlocks(
+      blocks,
+      blocks[0].id,
+      { start: 7, end: 7 },
+      '## Plan\nIntro **bold**\n\n1. First\n  1. Nested\n2. Second'
+    );
+
+    expect(serializeMarkdownBlocks(pasted.blocks)).toBe(
+      [
+        '- Before ## Plan',
+        '- Intro **bold**',
+        '- 1. First',
+        '  - 1. Nested',
+        '- 2. Second after',
+        '- Existing',
+      ].join('\n')
+    );
+    expect(pasted.focusId).toBe(pasted.blocks[3]?.id);
+    expect(pasted.caret).toBe('2. Second'.length);
+  });
+
+  it('replaces a selection with inline formatting without disturbing children', () => {
+    const blocks = parseMarkdownBlocks('- Say old now\n  - Existing child');
+    const pasted = pasteMarkdownBlocks(blocks, blocks[0].id, { start: 4, end: 7 }, '**new**');
+
+    expect(serializeMarkdownBlocks(pasted.blocks)).toBe('- Say **new** now\n  - Existing child');
+    expect(pasted.caret).toBe('Say **new**'.length);
+  });
+
+  it('keeps properties attached to the first pasted block', () => {
+    const blocks = parseMarkdownBlocks('- ');
+    const pasted = pasteMarkdownBlocks(
+      blocks,
+      blocks[0].id,
+      { start: 0, end: 0 },
+      '- Project\n  owner:: Chris'
+    );
+
+    expect(serializeMarkdownBlocks(pasted.blocks)).toBe('- Project\n  owner:: Chris');
   });
 });

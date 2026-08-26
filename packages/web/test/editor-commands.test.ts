@@ -43,8 +43,16 @@ describe('editor commands', () => {
     expect(edit('italic', '', 0).content).toBe('__');
     expect(edit('inline-code', 'x', 1, 1).content).toBe('x``');
     expect(edit('tag', 'topic', 0, 5)).toMatchObject({
-      content: '#topic',
+      content: '@topic',
       selection: { start: 1, end: 6 },
+    });
+    expect(edit('tag', 'deep work', 0, 9)).toMatchObject({
+      content: '@[[deep work]]',
+      selection: { start: 3, end: 12 },
+    });
+    expect(edit('tag', '', 0)).toMatchObject({
+      content: '@[[]]',
+      selection: { start: 3, end: 3 },
     });
   });
 

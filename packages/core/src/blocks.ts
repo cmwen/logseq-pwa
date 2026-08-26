@@ -83,12 +83,19 @@ export function extractBlockReferences(content: string): string[] {
   return [...new Set(extractPageLinks(content).map((link) => link.target))];
 }
 
-/** Extracts and case-normalizes `#tag` and `#[[multi word tag]]` tags. */
+/**
+ * Extracts canonical `@tag` / `@[[multi word tag]]` tags while continuing to
+ * read legacy `#` tags. Inline code, URLs, and email addresses are ignored.
+ */
 export function extractBlockTags(content: string): string[] {
   const tags = new Set<string>();
-  const tagPattern = /(^|[^\p{L}\p{N}_])#(?:\[\[([^\]]+)\]\]|([\p{L}\p{N}_/-]+))/gu;
+  const searchable = content
+    .replace(/`[^`\n]*`/gu, (value) => ' '.repeat(value.length))
+    .replace(/\b(?:https?:\/\/|mailto:)\S+/giu, (value) => ' '.repeat(value.length));
+  const tagPattern =
+    /(^|[^\p{L}\p{N}_@#])(?:@|#)(?:\[\[([^\]]+)\]\]|([\p{L}\p{N}_][\p{L}\p{N}_/-]*))/gu;
 
-  for (const match of content.matchAll(tagPattern)) {
+  for (const match of searchable.matchAll(tagPattern)) {
     const value = (match[2] ?? match[3])?.trim();
     if (value) {
       tags.add(value.toLocaleLowerCase());

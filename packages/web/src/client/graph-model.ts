@@ -26,11 +26,11 @@ function isMarkdownHeading(line: string): boolean {
 }
 
 /**
- * Finds Logseq hashtags, including `#[[a tag with spaces]]`.
+ * Finds canonical `@tags` / `@[[multi word tags]]` and legacy `#tags`.
  *
- * Markdown headings are ignored because their leading `#` is syntax, not a
- * tag. References are returned in document order; a repeated tag is retained
- * for callers that need occurrence counts.
+ * Markdown heading markers are masked because their leading `#` is syntax,
+ * not a tag; explicit tags later in a heading still count. References are
+ * returned in document order and repeats are retained for occurrence counts.
  */
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: The ordered scanner preserves source offsets while excluding frontmatter, headings, inline code, and fenced code.
 export function extractHashtagReferenceDetails(markdown: string): HashtagReference[] {
@@ -45,10 +45,17 @@ export function extractHashtagReferenceDetails(markdown: string): HashtagReferen
       const marker = fence[0] ?? '';
       if (!fenceMarker) fenceMarker = marker;
       else if (marker === fenceMarker) fenceMarker = '';
-    } else if (!fenceMarker && !isMarkdownHeading(line)) {
-      const searchable = line.replace(/`[^`\n]*`/gu, (value) => ' '.repeat(value.length));
+    } else if (!fenceMarker) {
+      let searchable = line
+        .replace(/`[^`\n]*`/gu, (value) => ' '.repeat(value.length))
+        .replace(/\b(?:https?:\/\/|mailto:)\S+/giu, (value) => ' '.repeat(value.length));
+      if (isMarkdownHeading(line)) {
+        searchable = searchable.replace(/^ {0,3}#{1,6}(?=\s|$)/u, (value) =>
+          ' '.repeat(value.length)
+        );
+      }
       const pattern =
-        /(^|[^\p{L}\p{N}_#])(#(?:\[\[([^\]\n]+)\]\]|[\p{L}\p{N}_][\p{L}\p{N}_/-]*))/gu;
+        /(^|[^\p{L}\p{N}_@#])((?:@|#)(?:\[\[([^\]\n]+)\]\]|[\p{L}\p{N}_][\p{L}\p{N}_/-]*))/gu;
       for (const match of searchable.matchAll(pattern)) {
         const raw = match[2] ?? '';
         const tag = (match[3] ?? raw.slice(1)).trim();
@@ -66,7 +73,7 @@ export function extractHashtagReferenceDetails(markdown: string): HashtagReferen
   return references;
 }
 
-/** Returns unique, case-normalized hashtags in written order. */
+/** Returns unique, case-normalized tags in written order. */
 export function extractHashtags(markdown: string): string[] {
   return [
     ...new Set(
@@ -78,13 +85,13 @@ export function extractHashtags(markdown: string): string[] {
 /** Alias that makes the relationship with page tags explicit at call sites. */
 export const extractTagReferences = extractHashtags;
 
-/** Extracts unique hashtags from one page. */
+/** Extracts unique canonical or legacy tags from one page. */
 export function extractPageTags(page: Pick<GraphPage, 'content'>): string[] {
   return extractHashtags(page.content);
 }
 
 export interface TagSummary {
-  /** Canonical, case-folded tag name (without `#`). */
+  /** Canonical, case-folded tag name (without its `@` or legacy `#` prefix). */
   tag: string;
   /** Number of occurrences across all page contents. */
   count: number;

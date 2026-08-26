@@ -14,12 +14,15 @@ import {
   moveBlock as moveCoreBlock,
   normalizeBlockOrder,
   outdentBlock as outdentCoreBlock,
+  parseBlockMarkdown,
   serializeBlockMarkdown,
   splitBlock as splitCoreBlock,
   splitFrontmatter,
   toggleBlockCollapsed as toggleCoreBlockCollapsed,
   updateBlockContent as updateCoreBlockContent,
 } from '@loam/core';
+import { normalizePastedMarkdown } from './clipboard-markdown.js';
+import type { TextSelection } from './editor-commands.js';
 
 export type OutlinerBlock = BlockNode;
 
@@ -102,6 +105,87 @@ export function updateBlockContent(
   content: string
 ): OutlinerBlock[] {
   return toTree(updateCoreBlockContent(toFlat(blocks), id, content));
+}
+
+/**
+ * Inserts clipboard Markdown as editable sibling/nested blocks. The active
+ * block becomes the first pasted root so text on either side of the selection
+ * stays in the natural first/last positions.
+ */
+export function pasteMarkdownBlocks(
+  blocks: readonly OutlinerBlock[],
+  id: string,
+  selection: TextSelection,
+  markdown: string
+): BlockMutation {
+  const source = normalizePastedMarkdown(markdown);
+  if (!source) return unchanged(blocks, id, selection.start);
+
+  const imported = parseBlockMarkdown(source);
+  const importedRoots = imported
+    .filter((block) => block.parentId === null)
+    .sort((left, right) => left.position - right.position);
+  const firstRoot = importedRoots[0];
+  if (!firstRoot) return unchanged(blocks, id, selection.start);
+
+  const flat = toFlat(blocks);
+  const target = getFlatBlock(flat, id);
+  const start = Math.max(0, Math.min(selection.start, target.content.length));
+  const end = Math.max(start, Math.min(selection.end, target.content.length));
+  const prefix = target.content.slice(0, start);
+  const suffix = target.content.slice(end);
+  const additionalRootCount = importedRoots.length - 1;
+  const importedChildCount = imported.filter((block) => block.parentId === firstRoot.id).length;
+
+  let next = flat.map((block) => {
+    if (block.id === target.id && Object.keys(firstRoot.properties).length) {
+      return { ...block, properties: { ...block.properties, ...firstRoot.properties } };
+    }
+    if (
+      block.parentId === target.parentId &&
+      block.position > target.position &&
+      additionalRootCount
+    ) {
+      return { ...block, position: block.position + additionalRootCount };
+    }
+    if (block.parentId === target.id && importedChildCount) {
+      return { ...block, position: block.position + importedChildCount };
+    }
+    return block;
+  });
+
+  const inserted = imported.flatMap((block) => {
+    if (block.id === firstRoot.id) return [];
+    if (block.parentId === null) {
+      return [
+        {
+          ...block,
+          parentId: target.parentId,
+          position: target.position + block.position,
+        },
+      ];
+    }
+    return [block.parentId === firstRoot.id ? { ...block, parentId: target.id } : block];
+  });
+  next = next.concat(inserted);
+
+  const lastRoot = importedRoots.at(-1) ?? firstRoot;
+  const firstContent = `${prefix}${firstRoot.content}${additionalRootCount ? '' : suffix}`;
+  next = updateCoreBlockContent(next, target.id, firstContent);
+  let focusId = target.id;
+  let caret = prefix.length + firstRoot.content.length;
+  if (additionalRootCount) {
+    next = updateCoreBlockContent(next, lastRoot.id, `${lastRoot.content}${suffix}`);
+    focusId = lastRoot.id;
+    caret = lastRoot.content.length;
+  }
+
+  return {
+    blocks: toTree(normalizeBlockOrder(next)),
+    focusId,
+    caret,
+    changed: true,
+  };
 }
 
 export function splitBlock(

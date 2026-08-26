@@ -63,6 +63,8 @@ function InlineContent({ imageSources, text, onLink, onTag }: MarkdownInlineProp
 
   while (cursor < text.length) {
     const remaining = text.slice(cursor);
+    const previous = text[cursor - 1] ?? '';
+    const tagBoundary = cursor === 0 || (!/[\p{L}\p{N}_@#]/u.test(previous) && previous !== '/');
     let match: RegExpMatchArray | null;
 
     match = remaining.match(/^\[\[([^\]]+)\]\]/u);
@@ -93,26 +95,30 @@ function InlineContent({ imageSources, text, onLink, onTag }: MarkdownInlineProp
       continue;
     }
 
-    match = remaining.match(/^#\[\[([^\]]+)\]\]/u);
-    if (match) {
+    match = remaining.match(/^([@#])\[\[([^\]]+)\]\]/u);
+    if (match && tagBoundary) {
       flushText();
-      const tag = match[1]?.trim() ?? '';
+      const sigil = match[1] ?? '@';
+      const tag = match[2]?.trim() ?? '';
       output.push(
         <button className='tag' key={key('tag')} onClick={() => onTag?.(tag)} type='button'>
-          #{tag}
+          {sigil}
+          {tag}
         </button>
       );
       cursor += match[0].length;
       continue;
     }
 
-    match = remaining.match(/^#([\p{L}\p{N}_/-]+)/u);
-    if (match) {
+    match = remaining.match(/^([@#])([\p{L}\p{N}_][\p{L}\p{N}_/-]*)/u);
+    if (match && tagBoundary) {
       flushText();
-      const tag = match[1] ?? '';
+      const sigil = match[1] ?? '@';
+      const tag = match[2] ?? '';
       output.push(
         <button className='tag' key={key('tag')} onClick={() => onTag?.(tag)} type='button'>
-          #{tag}
+          {sigil}
+          {tag}
         </button>
       );
       cursor += match[0].length;
@@ -371,27 +377,47 @@ function renderNode(
     case 'bullet': {
       const content = node.state ? `${node.state.toUpperCase()} ${node.text}` : node.text;
       const blockId = blockIdForContent(content);
+      const heading = node.state ? null : node.text.match(/^(#{1,6})\s+(.*)$/u);
+      const ordered = node.state ? null : node.text.match(/^(\d+[.)])\s+(.*)$/u);
+      const Heading = heading
+        ? (`h${heading[1]?.length ?? 1}` as 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6')
+        : null;
       return (
         <div
-          className={`page-block ${blockId === focusedBlockId ? 'page-block-focused' : ''}`.trim()}
+          className={`page-block ${ordered ? 'ordered-block' : ''} ${blockId === focusedBlockId ? 'page-block-focused' : ''}`.trim()}
           data-block-id={blockId}
           id={blockId ? blockDomId(blockId) : undefined}
           key={`bullet-${index}`}
           style={{ paddingLeft: `${node.indentation * 4}px` }}
           tabIndex={-1}
         >
-          <span className={`bullet ${node.state === 'done' ? 'bullet-done' : ''}`}>
-            {node.state === 'done' ? '✓' : ''}
-          </span>
+          {ordered ? (
+            <span className='ordered-marker'>{ordered[1]}</span>
+          ) : (
+            <span className={`bullet ${node.state === 'done' ? 'bullet-done' : ''}`}>
+              {node.state === 'done' ? '✓' : ''}
+            </span>
+          )}
           {node.state && <span className={`task-state task-${node.state}`}>{node.state}</span>}
-          <span>
-            <InlineContent
-              imageSources={imageSources}
-              onLink={onLink}
-              onTag={onTag}
-              text={node.text}
-            />
-          </span>
+          {Heading && heading ? (
+            <Heading className='block-heading'>
+              <InlineContent
+                imageSources={imageSources}
+                onLink={onLink}
+                onTag={onTag}
+                text={heading[2] ?? ''}
+              />
+            </Heading>
+          ) : (
+            <span>
+              <InlineContent
+                imageSources={imageSources}
+                onLink={onLink}
+                onTag={onTag}
+                text={ordered?.[2] ?? node.text}
+              />
+            </span>
+          )}
         </div>
       );
     }

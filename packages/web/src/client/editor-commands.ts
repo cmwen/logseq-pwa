@@ -50,7 +50,6 @@ export function applyDateReference(
 const wrappers: Partial<Record<EditorCommand, readonly [string, string]>> = {
   'page-link': ['[[', ']]'],
   'block-reference': ['((', '))'],
-  tag: ['#', ''],
   bold: ['**', '**'],
   italic: ['_', '_'],
   'inline-code': ['`', '`'],
@@ -66,6 +65,16 @@ export function applyEditorCommand(
   const end = clamp(selection.end, start, content.length);
 
   if (command === 'cycle-task') return cycleTask(content, { start, end });
+  if (command === 'tag') {
+    const selected = content.slice(start, end);
+    const opening = selected && !/\s/u.test(selected) ? '@' : '@[[';
+    const closing = opening === '@' ? '' : ']]';
+    const next = `${content.slice(0, start)}${opening}${selected}${closing}${content.slice(end)}`;
+    const nextSelection = selected
+      ? { start: start + opening.length, end: end + opening.length }
+      : { start: start + opening.length, end: start + opening.length };
+    return result(next, nextSelection);
+  }
   if (command === 'property') {
     const selected = content.slice(start, end);
     const next = `${content.slice(0, start)}${selected}:: ${content.slice(end)}`;

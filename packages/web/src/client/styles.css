@@ -128,6 +128,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
 .blank-line { height: 12px; }
 .page-paragraph { margin: 4px 0; max-width: 680px; }
 .page-block { align-items: baseline; display: flex; gap: 9px; margin: 5px 0; max-width: 720px; }
+.page-block .block-heading { line-height: 1.25; margin: 0; }
 .page-block-focused { background: rgba(214, 95, 66, .09); border-radius: 6px; box-shadow: 0 0 0 3px rgba(214, 95, 66, .08); margin-left: -8px; padding-right: 8px; }
 .bullet { align-items: center; background: #e0a087; border-radius: 50%; color: white; display: inline-flex; flex: 0 0 auto; height: 6px; justify-content: center; margin-left: 2px; width: 6px; }
 .bullet-done { background: var(--green); height: 15px; margin-left: -3px; width: 15px; }

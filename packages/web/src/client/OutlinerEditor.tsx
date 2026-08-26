@@ -1,5 +1,6 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { markdownFromClipboard } from './clipboard-markdown.js';
 import { applyDateReference, applyEditorCommand, type EditorCommand } from './editor-commands.js';
 import {
   addSiblingBlock,
@@ -17,6 +18,7 @@ import {
   moveBlock,
   type OutlinerBlock,
   outdentBlock,
+  pasteMarkdownBlocks,
   splitBlock,
   toggleBlockCollapsed,
   updateBlockContent,
@@ -47,6 +49,7 @@ interface BlockTreeProps {
   onActivate: (id: string) => void;
   onInput: (id: string, content: string) => void;
   onKeyDown: (event: KeyboardEvent, block: OutlinerBlock) => void;
+  onPaste: (event: ClipboardEvent, block: OutlinerBlock) => void;
   onAction: (action: BlockAction, id: string) => void;
   onMenu: (id: string) => void;
   registerInput: (id: string, element: HTMLTextAreaElement | null) => void;
@@ -212,6 +215,29 @@ export function OutlinerEditor({
       id,
       caret: edit.selectionStart,
     });
+  };
+
+  const handlePaste = (event: ClipboardEvent, block: OutlinerBlock) => {
+    if (readOnly || !event.clipboardData) return;
+    const markdown = markdownFromClipboard({
+      html: event.clipboardData.getData('text/html'),
+      text: event.clipboardData.getData('text/plain'),
+    });
+    if (!markdown) return;
+
+    event.preventDefault();
+    const input = event.currentTarget as HTMLTextAreaElement;
+    applyMutation(
+      pasteMarkdownBlocks(
+        currentBlocks.current,
+        block.id,
+        {
+          start: input.selectionStart ?? block.content.length,
+          end: input.selectionEnd ?? block.content.length,
+        },
+        markdown
+      )
+    );
   };
 
   // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Keyboard commands are kept together so their precedence is explicit.
@@ -415,6 +441,7 @@ export function OutlinerEditor({
           onActivate={(id) => setActiveId(id)}
           onInput={handleInput}
           onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
           onMenu={(id) => setMenuId((current) => (current === id ? undefined : id))}
           readOnly={readOnly}
           registerInput={registerInput}
@@ -448,7 +475,7 @@ export function OutlinerEditor({
               onClick={() => applyTextCommand('block-reference')}
               text='(( ))'
             />
-            <ActionButton label='Insert tag' onClick={() => applyTextCommand('tag')} text='#' />
+            <ActionButton label='Insert tag' onClick={() => applyTextCommand('tag')} text='@' />
             <label className='outliner-date-picker'>
               <span className='outliner-date-picker-label'>Date</span>
               <input
@@ -536,6 +563,7 @@ function BlockTree({
   onActivate,
   onInput,
   onKeyDown,
+  onPaste,
   onAction,
   onMenu,
   registerInput,
@@ -602,6 +630,7 @@ function BlockTree({
                   onInput(block.id, event.currentTarget.value);
                 }}
                 onKeyDown={(event) => onKeyDown(event, block)}
+                onPaste={(event) => onPaste(event, block)}
                 readOnly={readOnly}
                 ref={(element) => registerInput(block.id, element)}
                 rows={1}
@@ -667,6 +696,7 @@ function BlockTree({
                   onActivate={onActivate}
                   onInput={onInput}
                   onKeyDown={onKeyDown}
+                  onPaste={onPaste}
                   onMenu={onMenu}
                   readOnly={readOnly}
                   registerInput={registerInput}
