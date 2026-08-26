@@ -36,19 +36,22 @@
   border-radius: 7px;
   display: grid;
   gap: 5px;
-  grid-template-columns: 27px minmax(0, 1fr) 35px;
+  grid-template-columns: 25px 27px minmax(0, 1fr) 35px;
   min-height: 34px;
   padding: 2px 0;
   position: relative;
 }
 
 .outliner-row:hover,
-.outliner-row-active { background: rgba(120, 122, 110, .055); }
+.outliner-row-active,
+.outliner-row-selected { background: rgba(120, 122, 110, .055); }
+.outliner-row-selected { box-shadow: inset 2px 0 var(--outliner-accent); }
 .outliner-row-dragging { opacity: .45; }
 .outliner-row[draggable='true'] { cursor: grab; }
 .outliner-row[draggable='true']:active { cursor: grabbing; }
 
 .outliner-bullet,
+.outliner-select,
 .outliner-handle,
 .outliner-menu button,
 .outliner-mobile-toolbar button {
@@ -59,6 +62,15 @@
   cursor: pointer;
   display: inline-flex;
   justify-content: center;
+}
+
+.outliner-select {
+  accent-color: var(--outliner-accent);
+  cursor: pointer;
+  height: 15px;
+  justify-self: center;
+  margin: 8px 0 0;
+  width: 15px;
 }
 
 .outliner-bullet {
@@ -76,7 +88,7 @@
 .outliner-input {
   background: transparent;
   border: 0;
-  color: inherit;
+  color: var(--ink, inherit);
   display: block;
   font: inherit;
   line-height: 1.65;
@@ -86,6 +98,7 @@
   padding: 3px 4px;
   resize: none;
   width: 100%;
+  caret-color: var(--outliner-accent);
 }
 
 .outliner-input:focus { background: rgba(255, 255, 255, .55); border-radius: 4px; }
@@ -194,8 +207,9 @@
 
 @media (max-width: 720px) {
   .outliner { padding-bottom: calc(70px + env(safe-area-inset-bottom)); }
-  .outliner-row { grid-template-columns: 31px minmax(0, 1fr) 42px; }
+  .outliner-row { grid-template-columns: 25px 31px minmax(0, 1fr) 42px; }
   .outliner-bullet { height: 38px; width: 31px; }
+  .outliner-select { height: 17px; margin-top: 11px; width: 17px; }
   .outliner-input { font-size: 16px; min-height: 38px; padding: 7px 4px; }
   .outliner-handle { height: 40px; opacity: .58; width: 42px; }
   .outliner-children { margin-left: 15px; padding-left: 10px; }
@@ -251,8 +265,11 @@ html[data-theme='dark'] .outliner-focus-breadcrumb {
 }
 
 html[data-theme='dark'] .outliner-row:hover,
-html[data-theme='dark'] .outliner-row-active { background: rgba(154, 169, 156, .11); }
+html[data-theme='dark'] .outliner-row-active,
+html[data-theme='dark'] .outliner-row-selected { background: rgba(154, 169, 156, .11); }
 html[data-theme='dark'] .outliner-input:focus { background: rgba(35, 47, 39, .92); }
+html[data-theme='dark'] .outliner-input { color: #e7ebe4; caret-color: #f0a084; }
+html[data-theme='dark'] .outliner-input::selection { background: rgba(226, 123, 92, .42); color: #fff; }
 html[data-theme='dark'] .outliner-handle:hover,
 html[data-theme='dark'] .outliner-menu button:hover,
 html[data-theme='dark'] .outliner-mobile-toolbar button:hover {

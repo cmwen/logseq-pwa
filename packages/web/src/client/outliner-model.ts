@@ -208,10 +208,26 @@ export function indentBlock(blocks: readonly OutlinerBlock[], id: string): Block
   return fromStructuralResult(flat, next, id, blocks);
 }
 
+/** Indents each selected top-level block, preserving a multi-block selection. */
+export function indentBlocks(
+  blocks: readonly OutlinerBlock[],
+  ids: readonly string[]
+): BlockMutation {
+  return applyStructuralToSelection(blocks, ids, indentCoreBlock);
+}
+
 export function outdentBlock(blocks: readonly OutlinerBlock[], id: string): BlockMutation {
   const flat = toFlat(blocks);
   const next = outdentCoreBlock(flat, id);
   return fromStructuralResult(flat, next, id, blocks);
+}
+
+/** Outdents each selected top-level block, preserving a multi-block selection. */
+export function outdentBlocks(
+  blocks: readonly OutlinerBlock[],
+  ids: readonly string[]
+): BlockMutation {
+  return applyStructuralToSelection(blocks, ids, outdentCoreBlock, true);
 }
 
 export function moveBlock(
@@ -279,7 +295,6 @@ export function focusBlockTree(blocks: readonly OutlinerBlock[], id: string): Ou
   if (!block) return [];
   const expand = (node: OutlinerBlock): OutlinerBlock => ({
     ...node,
-    collapsed: false,
     children: node.children.map(expand),
   });
   return [expand(block)];
@@ -291,8 +306,19 @@ export function canIndent(blocks: readonly OutlinerBlock[], id: string): boolean
   return siblingBlocks(flat, block.parentId).findIndex((candidate) => candidate.id === id) > 0;
 }
 
+export function canIndentBlocks(blocks: readonly OutlinerBlock[], ids: readonly string[]): boolean {
+  return selectedRoots(toFlat(blocks), ids).some((id) => canIndent(blocks, id));
+}
+
 export function canOutdent(blocks: readonly OutlinerBlock[], id: string): boolean {
   return getFlatBlock(toFlat(blocks), id).parentId !== null;
+}
+
+export function canOutdentBlocks(
+  blocks: readonly OutlinerBlock[],
+  ids: readonly string[]
+): boolean {
+  return selectedRoots(toFlat(blocks), ids).some((id) => canOutdent(blocks, id));
 }
 
 export function canMove(blocks: readonly OutlinerBlock[], id: string, direction: -1 | 1): boolean {
@@ -377,6 +403,45 @@ function fromStructuralResult(
     return unchanged(previousTree, focusId);
   }
   return { blocks: toTree(next), focusId, changed: true };
+}
+
+function applyStructuralToSelection(
+  blocks: readonly OutlinerBlock[],
+  ids: readonly string[],
+  operation: (blocks: readonly Block[], id: string) => Block[],
+  reverse = false
+): BlockMutation {
+  const previous = toFlat(blocks);
+  const selected = selectedRoots(previous, ids);
+  if (!selected.length) return unchanged(blocks, ids[0]);
+
+  let next = previous;
+  // Applying the operation in document order keeps adjacent selected blocks at
+  // the same level (B and C both become children of A, rather than C becoming
+  // a child of B). Outdenting is applied in reverse order because every item
+  // is inserted immediately after its parent. Descendants of a selected block
+  // move with their parent.
+  for (const id of reverse ? [...selected].reverse() : selected) {
+    if (next.some((block) => block.id === id)) next = operation(next, id);
+  }
+  return fromStructuralResult(previous, next, selected[0], blocks);
+}
+
+function selectedRoots(blocks: readonly Block[], ids: readonly string[]): string[] {
+  const selected = new Set(ids);
+  if (!selected.size) return [];
+  const byId = new Map(blocks.map((block) => [block.id, block]));
+  return blocks
+    .filter((block) => selected.has(block.id))
+    .filter((block) => {
+      let parentId = block.parentId;
+      while (parentId !== null) {
+        if (selected.has(parentId)) return false;
+        parentId = byId.get(parentId)?.parentId ?? null;
+      }
+      return true;
+    })
+    .map((block) => block.id);
 }
 
 function serializeForComparison(blocks: readonly Block[]): string {

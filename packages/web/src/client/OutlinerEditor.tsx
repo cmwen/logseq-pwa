@@ -6,18 +6,22 @@ import {
   addSiblingBlock,
   type BlockMutation,
   canIndent,
+  canIndentBlocks,
   canMove,
   canOutdent,
+  canOutdentBlocks,
   createBlock,
   deleteBlock,
   dropBlock,
   findBlock,
   focusBlockTree,
   indentBlock,
+  indentBlocks,
   mergeBlockBackward,
   moveBlock,
   type OutlinerBlock,
   outdentBlock,
+  outdentBlocks,
   pasteMarkdownBlocks,
   splitBlock,
   toggleBlockCollapsed,
@@ -45,6 +49,7 @@ interface BlockTreeProps {
   activeId?: string;
   draggedId?: string;
   menuId?: string;
+  selectedIds: ReadonlySet<string>;
   readOnly: boolean;
   onActivate: (id: string) => void;
   onInput: (id: string, content: string) => void;
@@ -52,6 +57,7 @@ interface BlockTreeProps {
   onPaste: (event: ClipboardEvent, block: OutlinerBlock) => void;
   onAction: (action: BlockAction, id: string) => void;
   onMenu: (id: string) => void;
+  onSelect: (id: string, range: boolean) => void;
   registerInput: (id: string, element: HTMLTextAreaElement | null) => void;
   onDrop: (draggedId: string, targetId: string, placement: 'before' | 'after' | 'inside') => void;
   onDragState: (id?: string) => void;
@@ -72,6 +78,8 @@ export function OutlinerEditor({
   const [blocks, setBlocks] = useState<OutlinerBlock[]>(() => [...initialBlocks]);
   const [activeId, setActiveId] = useState<string | undefined>(initialBlocks[0]?.id);
   const [menuId, setMenuId] = useState<string>();
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [selectionAnchorId, setSelectionAnchorId] = useState<string>();
   const [focusRequest, setFocusRequest] = useState<FocusRequest>();
   const [dateValue, setDateValue] = useState(() => formatDateInputValue(new Date()));
   const inputs = useRef(new Map<string, HTMLTextAreaElement>());
@@ -93,6 +101,8 @@ export function OutlinerEditor({
     past.current = [];
     future.current = [];
     setActiveId(next[0]?.id);
+    setSelectedIds(new Set());
+    setSelectionAnchorId(undefined);
   }, [controlledBlocks]);
 
   useEffect(() => {
@@ -140,6 +150,10 @@ export function OutlinerEditor({
       mutation.blocks,
       mutation.focusId ? { id: mutation.focusId, caret: mutation.caret } : undefined
     );
+    setSelectedIds((current) => {
+      const available = new Set(flattenBlockIds(mutation.blocks));
+      return new Set([...current].filter((id) => available.has(id)));
+    });
     if (focusedBlockId && !findBlock(mutation.blocks, focusedBlockId)) onExitFocus?.();
   };
 
@@ -331,10 +345,15 @@ export function OutlinerEditor({
     }
     if (event.key === 'Tab') {
       event.preventDefault();
+      const selected = selectedIds.size > 1 && selectedIds.has(block.id);
       applyMutation(
         event.shiftKey
-          ? outdentBlock(currentBlocks.current, block.id)
-          : indentBlock(currentBlocks.current, block.id)
+          ? selected
+            ? outdentBlocks(currentBlocks.current, [...selectedIds])
+            : outdentBlock(currentBlocks.current, block.id)
+          : selected
+            ? indentBlocks(currentBlocks.current, [...selectedIds])
+            : indentBlock(currentBlocks.current, block.id)
       );
       return;
     }
@@ -375,8 +394,20 @@ export function OutlinerEditor({
     if (readOnly) return;
     const current = currentBlocks.current;
     if (action === 'add') applyMutation(addSiblingBlock(current, id));
-    if (action === 'indent') applyMutation(indentBlock(current, id));
-    if (action === 'outdent') applyMutation(outdentBlock(current, id));
+    if (action === 'indent') {
+      applyMutation(
+        selectedIds.size > 1 && selectedIds.has(id)
+          ? indentBlocks(current, [...selectedIds])
+          : indentBlock(current, id)
+      );
+    }
+    if (action === 'outdent') {
+      applyMutation(
+        selectedIds.size > 1 && selectedIds.has(id)
+          ? outdentBlocks(current, [...selectedIds])
+          : outdentBlock(current, id)
+      );
+    }
     if (action === 'up') applyMutation(moveBlock(current, id, -1));
     if (action === 'down') applyMutation(moveBlock(current, id, 1));
     if (action === 'collapse') applyMutation(toggleBlockCollapsed(current, id));
@@ -388,6 +419,14 @@ export function OutlinerEditor({
       if (shouldDelete) applyMutation(deleteBlock(current, id));
     }
     setMenuId(undefined);
+  };
+
+  const handleSelect = (id: string, range: boolean) => {
+    setActiveId(id);
+    setSelectedIds((current) =>
+      nextSelectedIds(current, id, range, selectionAnchorId, visibleBlocks)
+    );
+    setSelectionAnchorId(id);
   };
 
   const handleDrop = (
@@ -443,8 +482,10 @@ export function OutlinerEditor({
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
           onMenu={(id) => setMenuId((current) => (current === id ? undefined : id))}
+          onSelect={handleSelect}
           readOnly={readOnly}
           registerInput={registerInput}
+          selectedIds={selectedIds}
           onDrop={handleDrop}
           onDragState={setDraggedId}
         />
@@ -548,6 +589,33 @@ export function OutlinerEditor({
               />
             )}
           </ToolbarGroup>
+          {selectedIds.size > 1 && (
+            <ToolbarGroup label={`${selectedIds.size} selected blocks`}>
+              <ActionButton
+                disabled={!canOutdentBlocks(blocks, [...selectedIds])}
+                label='Outdent selected blocks'
+                onClick={() => {
+                  applyMutation(outdentBlocks(blocks, [...selectedIds]));
+                  setMenuId(undefined);
+                }}
+                text='⇤'
+              />
+              <ActionButton
+                disabled={!canIndentBlocks(blocks, [...selectedIds])}
+                label='Indent selected blocks'
+                onClick={() => {
+                  applyMutation(indentBlocks(blocks, [...selectedIds]));
+                  setMenuId(undefined);
+                }}
+                text='⇥'
+              />
+              <ActionButton
+                label='Clear block selection'
+                onClick={() => setSelectedIds(new Set())}
+                text='×'
+              />
+            </ToolbarGroup>
+          )}
         </div>
       )}
     </section>
@@ -559,6 +627,7 @@ function BlockTree({
   activeId,
   draggedId,
   menuId,
+  selectedIds,
   readOnly,
   onActivate,
   onInput,
@@ -566,6 +635,7 @@ function BlockTree({
   onPaste,
   onAction,
   onMenu,
+  onSelect,
   registerInput,
   onDrop,
   onDragState,
@@ -580,7 +650,7 @@ function BlockTree({
           <div className='outliner-branch' key={block.id}>
             {/* biome-ignore lint/a11y/noStaticElementInteractions: The row is a draggable handle while its controls remain keyboard-accessible. */}
             <div
-              className={`outliner-row ${active ? 'outliner-row-active' : ''} ${draggedId === block.id ? 'outliner-row-dragging' : ''}`.trim()}
+              className={`outliner-row ${active ? 'outliner-row-active' : ''} ${selectedIds.has(block.id) ? 'outliner-row-selected' : ''} ${draggedId === block.id ? 'outliner-row-dragging' : ''}`.trim()}
               draggable={!readOnly}
               onDragOver={(event) => {
                 if (!readOnly && draggedId && draggedId !== block.id) event.preventDefault();
@@ -606,6 +676,19 @@ function BlockTree({
                 if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
               }}
             >
+              {!readOnly && (
+                <input
+                  aria-label={`Select block${block.content ? `: ${block.content}` : ''}`}
+                  checked={selectedIds.has(block.id)}
+                  className='outliner-select'
+                  onClick={(event) => {
+                    event.preventDefault();
+                    onSelect(block.id, event.shiftKey);
+                  }}
+                  onChange={() => undefined}
+                  type='checkbox'
+                />
+              )}
               <button
                 aria-label={
                   hasChildren
@@ -667,6 +750,13 @@ function BlockTree({
                     onClick={() => onAction('outdent', block.id)}
                     text='←'
                   />
+                  {hasChildren && (
+                    <ActionButton
+                      label={block.collapsed ? 'Expand block' : 'Collapse block'}
+                      onClick={() => onAction('collapse', block.id)}
+                      text={block.collapsed ? '▸' : '▾'}
+                    />
+                  )}
                   <ActionButton
                     label='Move block up'
                     onClick={() => onAction('up', block.id)}
@@ -698,8 +788,10 @@ function BlockTree({
                   onKeyDown={onKeyDown}
                   onPaste={onPaste}
                   onMenu={onMenu}
+                  onSelect={onSelect}
                   readOnly={readOnly}
                   registerInput={registerInput}
+                  selectedIds={selectedIds}
                   onDrop={onDrop}
                   onDragState={onDragState}
                 />
@@ -753,6 +845,41 @@ function adjacentVisibleBlock(
   visit(blocks);
   const index = visible.findIndex((node) => node.id === id);
   return index >= 0 ? visible[index + direction] : undefined;
+}
+
+function flattenBlockIds(blocks: readonly OutlinerBlock[]): string[] {
+  const ids: string[] = [];
+  const visit = (nodes: readonly OutlinerBlock[]) => {
+    for (const node of nodes) {
+      ids.push(node.id);
+      if (!node.collapsed) visit(node.children);
+    }
+  };
+  visit(blocks);
+  return ids;
+}
+
+function nextSelectedIds(
+  current: ReadonlySet<string>,
+  id: string,
+  range: boolean,
+  anchorId: string | undefined,
+  visibleBlocks: readonly OutlinerBlock[]
+): Set<string> {
+  const next = new Set(current);
+  if (range && anchorId) {
+    const visibleIds = flattenBlockIds(visibleBlocks);
+    const start = visibleIds.indexOf(anchorId);
+    const end = visibleIds.indexOf(id);
+    if (start >= 0 && end >= 0) {
+      const [from, to] = start < end ? [start, end] : [end, start];
+      for (const selectedId of visibleIds.slice(from, to + 1)) next.add(selectedId);
+      return next;
+    }
+  }
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  return next;
 }
 
 function resizeInput(input: HTMLTextAreaElement) {

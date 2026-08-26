@@ -6,13 +6,16 @@ import {
   dropBlock,
   focusBlockTree,
   indentBlock,
+  indentBlocks,
   mergeBlockBackward,
   moveBlock,
   outdentBlock,
+  outdentBlocks,
   parseMarkdownBlocks,
   pasteMarkdownBlocks,
   serializeMarkdownBlocks,
   splitBlock,
+  toggleBlockCollapsed,
 } from '../src/client/outliner-model.js';
 
 describe('outliner model', () => {
@@ -77,6 +80,36 @@ describe('outliner model', () => {
     expect(serializeMarkdownBlocks(moved.blocks)).toBe('- One\n- Three\n- Two\n  - Child');
   });
 
+  it('indents and outdents multiple selected blocks as one operation', () => {
+    const blocks = parseMarkdownBlocks('- One\n- Two\n  - Existing child\n- Three\n- Four');
+    const twoId = blocks[1].id;
+    const threeId = blocks[2].id;
+    const indented = indentBlocks(blocks, [twoId, threeId]);
+    expect(serializeMarkdownBlocks(indented.blocks)).toBe(
+      '- One\n  - Two\n    - Existing child\n  - Three\n- Four'
+    );
+
+    const restored = outdentBlocks(indented.blocks, [twoId, threeId]);
+    expect(serializeMarkdownBlocks(restored.blocks)).toBe(
+      '- One\n- Two\n  - Existing child\n- Three\n- Four'
+    );
+  });
+
+  it('does not move a selected descendant twice when its parent is selected', () => {
+    const blocks = parseMarkdownBlocks('- One\n- Two\n  - Child\n- Three');
+    const moved = indentBlocks(blocks, [blocks[1].id, blocks[1].children[0].id]);
+    expect(serializeMarkdownBlocks(moved.blocks)).toBe('- One\n  - Two\n    - Child\n- Three');
+  });
+
+  it('toggles collapse without changing serialized Markdown', () => {
+    const blocks = parseMarkdownBlocks('- Parent\n  - Child');
+    const collapsed = toggleBlockCollapsed(blocks, blocks[0].id);
+    expect(collapsed.blocks[0]?.collapsed).toBe(true);
+    expect(serializeMarkdownBlocks(collapsed.blocks)).toBe('- Parent\n  - Child');
+    const expanded = toggleBlockCollapsed(collapsed.blocks, blocks[0].id);
+    expect(expanded.blocks[0]?.collapsed).toBe(false);
+  });
+
   it('promotes children when an empty parent is removed', () => {
     const blocks = parseMarkdownBlocks('- \n  - Child\n- Last');
     const removed = deleteBlock(blocks, blocks[0].id, true);
@@ -96,6 +129,14 @@ describe('outliner model', () => {
     const focused = focusBlockTree(blocks, blocks[0].id);
     expect(serializeMarkdownBlocks(focused)).toBe('- One\n  - Child\n    - Grandchild');
     expect(focused[0]?.collapsed).toBe(false);
+  });
+
+  it('preserves collapse state when a block is focused', () => {
+    const blocks = parseMarkdownBlocks('- One\n  - Child');
+    const collapsed = toggleBlockCollapsed(blocks, blocks[0].id);
+    const focused = focusBlockTree(collapsed.blocks, blocks[0].id);
+    expect(focused[0]?.collapsed).toBe(true);
+    expect(focused[0]?.children).toHaveLength(1);
   });
 
   it('pastes multiline Markdown as editable sibling and nested blocks', () => {
