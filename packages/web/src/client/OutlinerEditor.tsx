@@ -248,8 +248,9 @@ export function OutlinerEditor({
 
   const handlePaste = (event: ClipboardEvent, block: OutlinerBlock) => {
     if (readOnly || !event.clipboardData) return;
+    const html = event.clipboardData.getData('text/html');
     const markdown = markdownFromClipboard({
-      html: event.clipboardData.getData('text/html'),
+      html,
       text: event.clipboardData.getData('text/plain'),
     });
     if (!markdown) return;
@@ -264,7 +265,8 @@ export function OutlinerEditor({
           start: input.selectionStart ?? block.content.length,
           end: input.selectionEnd ?? block.content.length,
         },
-        markdown
+        markdown,
+        { groupRichText: Boolean(html) }
       )
     );
   };

@@ -39,6 +39,11 @@ export interface BlockMutation {
   changed: boolean;
 }
 
+export interface PasteMarkdownOptions {
+  /** Keeps rich clipboard content together under its first pasted block. */
+  groupRichText?: boolean;
+}
+
 export interface OutlinerSafety {
   safe: boolean;
   reasons: string[];
@@ -122,17 +127,35 @@ export function pasteMarkdownBlocks(
   blocks: readonly OutlinerBlock[],
   id: string,
   selection: TextSelection,
-  markdown: string
+  markdown: string,
+  options: PasteMarkdownOptions = {}
 ): BlockMutation {
   const source = normalizePastedMarkdown(markdown);
   if (!source) return unchanged(blocks, id, selection.start);
 
-  const imported = parseBlockMarkdown(source);
-  const importedRoots = imported
+  let imported = parseBlockMarkdown(source);
+  let importedRoots = imported
     .filter((block) => block.parentId === null)
     .sort((left, right) => left.position - right.position);
   const firstRoot = importedRoots[0];
   if (!firstRoot) return unchanged(blocks, id, selection.start);
+
+  // Rich-text editors commonly copy paragraphs, headings, and list items as
+  // separate top-level HTML nodes. Keep that paste readable as one subtree by
+  // making the first item its parent while preserving any source nesting.
+  if (options.groupRichText && importedRoots.length > 1) {
+    const firstChildCount = imported.filter((block) => block.parentId === firstRoot.id).length;
+    const additionalRoots = new Set(importedRoots.slice(1).map((block) => block.id));
+    imported = imported.map((block) => {
+      if (!additionalRoots.has(block.id)) return block;
+      return {
+        ...block,
+        parentId: firstRoot.id,
+        position: firstChildCount + block.position - 1,
+      };
+    });
+    importedRoots = [firstRoot];
+  }
 
   const flat = toFlat(blocks);
   const target = getFlatBlock(flat, id);

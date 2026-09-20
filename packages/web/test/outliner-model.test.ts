@@ -200,6 +200,30 @@ describe('outliner model', () => {
     expect(pasted.caret).toBe('2. Second'.length);
   });
 
+  it('groups rich-text paste under its first block', () => {
+    const blocks = parseMarkdownBlocks('- Before  after\n- Existing');
+    const pasted = pasteMarkdownBlocks(
+      blocks,
+      blocks[0].id,
+      { start: 7, end: 7 },
+      'A summary paragraph\n\n### Video highlights\n\n- First highlight\n  - Nested detail\n- Second highlight',
+      { groupRichText: true }
+    );
+
+    expect(serializeMarkdownBlocks(pasted.blocks)).toBe(
+      [
+        '- Before A summary paragraph after',
+        '  - ### Video highlights',
+        '  - First highlight',
+        '    - Nested detail',
+        '  - Second highlight',
+        '- Existing',
+      ].join('\n')
+    );
+    expect(pasted.focusId).toBe(blocks[0]?.id);
+    expect(pasted.caret).toBe('Before A summary paragraph'.length);
+  });
+
   it('replaces a selection with inline formatting without disturbing children', () => {
     const blocks = parseMarkdownBlocks('- Say old now\n  - Existing child');
     const pasted = pasteMarkdownBlocks(blocks, blocks[0].id, { start: 4, end: 7 }, '**new**');
